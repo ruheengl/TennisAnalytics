@@ -47,3 +47,20 @@ Outputs:
 - `data/features/player_features.sqlite` (with retrieval indexes)
 - `data/features/feature_state.json` (incremental refresh fingerprints)
 - `docs/player_feature_columns.md` (column dictionary)
+
+## Match outcome modeling
+
+Use `pipeline/modeling.py` to train and evaluate a tree model (`DecisionTreeClassifier`)
+for match outcome prediction on top of the cleaned feature SQLite artifact.
+
+Example:
+
+```bash
+python pipeline/modeling.py --max-depth 6 --min-samples-leaf 120
+```
+
+Outputs:
+- `data/models/match_outcome_tree.pkl` (serialized model + feature metadata)
+- `data/models/feature_importance.json`
+- `data/models/top_decision_paths.json`
+- `data/models/evaluation_metrics.json` (overall + season/surface segment metrics)

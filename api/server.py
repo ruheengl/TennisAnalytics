@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import pickle
 import sqlite3
 import threading
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ from pydantic import BaseModel, Field, model_validator
 from pipeline.trends import DegradationCriteria, TrendOptions, annotate_series, evaluate_degradation
 
 SQLITE_PATH = Path("data/features/player_features.sqlite")
+MODEL_ARTIFACT_PATH = Path("data/models/match_outcome_tree.pkl")
 DEFAULT_FEATURES = [
     "career_win_pct",
     "service_points_won_pct",
@@ -73,6 +75,13 @@ class TrendQueryParams(BaseModel):
     change_point_z: float = Field(2.0, ge=0.5, le=10.0)
 
 
+class PredictRequest(BaseModel):
+    features: Dict[str, float] = Field(
+        ..., description="Feature vector aligned to training feature names."
+    )
+    top_k_features: int = Field(5, ge=1, le=20)
+
+
 @dataclass
 class ClusterCacheEntry:
     request_id: str
@@ -93,6 +102,8 @@ class ClusterCacheEntry:
 app = FastAPI(title="Player Clustering API", version="0.1.0")
 _cache_lock = threading.Lock()
 _cluster_cache: Dict[str, ClusterCacheEntry] = {}
+_predictor_lock = threading.Lock()
+_predictor_cache: Optional[Dict[str, Any]] = None
 METRIC_COLUMN_MAP: Dict[str, str] = {
     "elo": "elo_pre",
     "ace_pct": "aces_per_service_game",
@@ -109,6 +120,86 @@ def _metric_column(metric: str) -> str:
             detail=f"Unsupported metric '{metric}'. Supported: {sorted(METRIC_COLUMN_MAP)}",
         )
     return col
+
+
+def _load_predictor() -> Dict[str, Any]:
+    global _predictor_cache
+    with _predictor_lock:
+        if _predictor_cache is not None:
+            return _predictor_cache
+        if not MODEL_ARTIFACT_PATH.exists():
+            raise HTTPException(
+                status_code=500,
+                detail=f"Model artifact not found at {MODEL_ARTIFACT_PATH}. "
+                "Run pipeline/modeling.py first.",
+            )
+        with MODEL_ARTIFACT_PATH.open("rb") as fh:
+            payload = pickle.load(fh)
+        required = {"model", "feature_columns", "imputer_medians", "threshold"}
+        if not required.issubset(set(payload.keys())):
+            raise HTTPException(status_code=500, detail="Model artifact payload is invalid.")
+        _predictor_cache = payload
+        return payload
+
+
+def _prediction_explanation(
+    model: Any,
+    x: np.ndarray,
+    feature_columns: List[str],
+    top_k: int,
+) -> Dict[str, Any]:
+    if not hasattr(model, "tree_"):
+        return {"top_contributing_features": [], "path_summary": {"rules": [], "leaf_id": None}}
+
+    tree = model.tree_
+    node_indicator = model.decision_path(x)
+    leaf_id = int(model.apply(x)[0])
+    node_ids = node_indicator.indices[
+        node_indicator.indptr[0] : node_indicator.indptr[1]
+    ].tolist()
+
+    rules: List[Dict[str, Any]] = []
+    contributions: Dict[str, float] = {}
+    for node_id in node_ids:
+        left_id = int(tree.children_left[node_id])
+        right_id = int(tree.children_right[node_id])
+        if left_id == right_id:
+            continue
+        feat_idx = int(tree.feature[node_id])
+        threshold = float(tree.threshold[node_id])
+        value = float(x[0, feat_idx])
+        feature_name = feature_columns[feat_idx]
+        direction = "<=" if value <= threshold else ">"
+        margin = abs(value - threshold)
+        rules.append(
+            {
+                "feature": feature_name,
+                "operator": direction,
+                "threshold": threshold,
+                "value": value,
+                "margin": margin,
+            }
+        )
+        contributions[feature_name] = contributions.get(feature_name, 0.0) + margin
+
+    top = sorted(
+        [{"feature": k, "score": float(v)} for k, v in contributions.items()],
+        key=lambda item: item["score"],
+        reverse=True,
+    )[:top_k]
+
+    leaf_counts = tree.value[leaf_id][0]
+    total = float(np.sum(leaf_counts))
+    win_prob = float(leaf_counts[1] / total) if total else None
+    return {
+        "top_contributing_features": top,
+        "path_summary": {
+            "leaf_id": leaf_id,
+            "sample_count": int(tree.n_node_samples[leaf_id]),
+            "leaf_win_probability": win_prob,
+            "rules": rules,
+        },
+    }
 
 
 def _connect() -> sqlite3.Connection:
@@ -676,11 +767,50 @@ def player_metric_degradation(
     }
 
 
+@app.post("/predict")
+def predict_match_outcome(req: PredictRequest) -> Dict[str, Any]:
+    predictor = _load_predictor()
+    model = predictor["model"]
+    feature_columns = list(predictor["feature_columns"])
+    medians = np.asarray(predictor["imputer_medians"], dtype=np.float64)
+    threshold = float(predictor.get("threshold", 0.5))
+
+    x = np.asarray(
+        [
+            [
+                float(req.features.get(col))
+                if req.features.get(col) is not None
+                else float(medians[idx])
+                for idx, col in enumerate(feature_columns)
+            ]
+        ],
+        dtype=np.float64,
+    )
+
+    prob = float(model.predict_proba(x)[0, 1])
+    label = int(prob >= threshold)
+    explanation = _prediction_explanation(model, x, feature_columns, req.top_k_features)
+
+    return {
+        "predicted_outcome": label,
+        "win_probability": prob,
+        "threshold": threshold,
+        "model_type": predictor.get("model_type", "tree_model"),
+        "trained_at": predictor.get("trained_at"),
+        "used_default_medians_for": [
+            col for col in feature_columns if req.features.get(col) is None
+        ],
+        "explanation": explanation,
+    }
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     return {
         "ok": SQLITE_PATH.exists(),
         "sqlite_path": str(SQLITE_PATH),
+        "model_artifact_path": str(MODEL_ARTIFACT_PATH),
+        "model_artifact_exists": MODEL_ARTIFACT_PATH.exists(),
         "cache_size": len(_cluster_cache),
         "default_attributes": DEFAULT_FEATURES,
     }
