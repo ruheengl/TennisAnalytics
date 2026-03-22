@@ -29,3 +29,21 @@ python pipeline/clean_stats.py --years 2024 2025 2026
 Outputs:
 - `data/processed/atp_YYYY_clean.csv`
 - `data/processed/cleaning_report.json`
+
+## Player feature generation
+
+Use `pipeline/features.py` to build player-level feature vectors from cleaned
+match files, persist a parquet analytics artifact, and upsert an indexed SQLite
+serving table.
+
+Example:
+
+```bash
+python pipeline/features.py --match-windows 5 10 20 --day-windows 30 90 365
+```
+
+Outputs:
+- `data/features/player_features.parquet`
+- `data/features/player_features.sqlite` (with retrieval indexes)
+- `data/features/feature_state.json` (incremental refresh fingerprints)
+- `docs/player_feature_columns.md` (column dictionary)
