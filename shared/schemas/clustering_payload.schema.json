@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://csce679/shared/schemas/clustering_payload.schema.json",
+  "title": "ClusteringPayload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id", "algorithm", "features", "observations"],
+  "properties": {
+    "run_id": { "type": "string" },
+    "algorithm": { "type": "string", "enum": ["kmeans", "gmm", "dbscan", "hierarchical"] },
+    "features": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": ["ace_pct", "break_points_won_pct", "win_pct", "elo_trend"]
+      },
+      "uniqueItems": true
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["player_id", "vector"],
+        "properties": {
+          "player_id": { "type": "string" },
+          "vector": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 1
+          }
+        }
+      }
+    },
+    "params": {
+      "type": "object",
+      "description": "Algorithm-specific hyperparameters.",
+      "additionalProperties": true
+    }
+  }
+}

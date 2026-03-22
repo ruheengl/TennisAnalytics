@@ -1,0 +1,37 @@
+version: 1
+metrics:
+  - key: ace_pct
+    name: Ace Percentage
+    formula: "aces / service_points * 100"
+    inputs:
+      - aces
+      - service_points
+    output_type: percentage
+    null_handling: "null when service_points = 0"
+
+  - key: break_points_won_pct
+    name: Break Points Won Percentage
+    formula: "break_points_won / break_point_opportunities * 100"
+    inputs:
+      - break_points_won
+      - break_point_opportunities
+    output_type: percentage
+    null_handling: "null when break_point_opportunities = 0"
+
+  - key: win_pct
+    name: Win Percentage
+    formula: "wins / matches_played * 100"
+    inputs:
+      - wins
+      - matches_played
+    output_type: percentage
+    null_handling: "null when matches_played = 0"
+
+  - key: elo_trend
+    name: Elo Trend
+    formula: "slope(linear_regression(match_date_ordinal, elo_after_match))"
+    inputs:
+      - match_date_ordinal
+      - elo_after_match
+    output_type: slope
+    null_handling: "null when fewer than two Elo observations"

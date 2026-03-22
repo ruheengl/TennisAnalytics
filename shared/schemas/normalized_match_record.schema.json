@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://csce679/shared/schemas/normalized_match_record.schema.json",
+  "title": "NormalizedMatchRecord",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "match_id",
+    "tournament",
+    "date",
+    "surface",
+    "best_of",
+    "winner",
+    "loser",
+    "stats"
+  ],
+  "properties": {
+    "match_id": { "type": "string", "description": "Stable ID for deduplicated match rows." },
+    "tournament": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "level", "round"],
+      "properties": {
+        "name": { "type": "string" },
+        "level": { "type": "string" },
+        "round": { "type": "string" }
+      }
+    },
+    "date": { "type": "string", "format": "date" },
+    "surface": { "type": "string", "enum": ["Hard", "Clay", "Grass", "Carpet", "Unknown"] },
+    "best_of": { "type": "integer", "minimum": 3, "maximum": 5 },
+    "winner": { "$ref": "./normalized_player_record.schema.json" },
+    "loser": { "$ref": "./normalized_player_record.schema.json" },
+    "score": { "type": "string" },
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["aces_winner", "aces_loser", "bp_faced_winner", "bp_saved_winner", "bp_faced_loser", "bp_saved_loser"],
+      "properties": {
+        "aces_winner": { "type": "integer", "minimum": 0 },
+        "aces_loser": { "type": "integer", "minimum": 0 },
+        "bp_faced_winner": { "type": "integer", "minimum": 0 },
+        "bp_saved_winner": { "type": "integer", "minimum": 0 },
+        "bp_faced_loser": { "type": "integer", "minimum": 0 },
+        "bp_saved_loser": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

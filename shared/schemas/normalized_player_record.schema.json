@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://csce679/shared/schemas/normalized_player_record.schema.json",
+  "title": "NormalizedPlayerRecord",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["player_id", "name", "country", "hand", "ranking", "age"],
+  "properties": {
+    "player_id": { "type": "string", "description": "Canonical player identifier." },
+    "name": { "type": "string" },
+    "country": { "type": "string", "minLength": 3, "maxLength": 3 },
+    "hand": { "type": "string", "enum": ["R", "L", "U"] },
+    "ranking": { "type": ["integer", "null"], "minimum": 1 },
+    "age": { "type": ["number", "null"], "minimum": 13 }
+  }
+}
