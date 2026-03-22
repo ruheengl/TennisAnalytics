@@ -2,9 +2,15 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import * as d3 from 'd3'
 
-const players = ref(buildMockPlayers(2200))
+const API_BASE = '/api'
+
+const players = ref([])
 const hoveredPlayerId = ref(null)
 const selectedPlayerId = ref(null)
+const loading = ref(false)
+const loadError = ref('')
+const selectedSeries = ref([])
+const degradationScores = ref({})
 const query = reactive({
   name: '',
   cluster: 'all',
@@ -15,52 +21,14 @@ const query = reactive({
 const appliedQuery = ref({ ...query })
 let debounceHandle
 
-const clusterSummary = computed(() => {
-  const grouped = d3.rollups(
-    filteredPlayers.value,
-    (v) => ({
-      count: v.length,
-      meanWinRate: d3.mean(v, (d) => d.winRate),
-      meanElo: d3.mean(v, (d) => d.currentElo)
-    }),
-    (d) => d.cluster
-  )
-
-  return grouped
-    .map(([cluster, values]) => ({ cluster, ...values }))
-    .sort((a, b) => d3.ascending(a.cluster, b.cluster))
-})
-
-const filteredPlayers = computed(() => {
-  const q = appliedQuery.value
-  return players.value.filter((p) => {
-    const matchesName = p.name.toLowerCase().includes(q.name.toLowerCase())
-    const matchesCluster = q.cluster === 'all' || p.cluster === q.cluster
-    const matchesWinRate = p.winRate >= q.winRateMin && p.winRate <= q.winRateMax
-    return matchesName && matchesCluster && matchesWinRate
-  })
-})
-
-const selectedPlayer = computed(() =>
-  players.value.find((p) => p.id === (selectedPlayerId.value ?? hoveredPlayerId.value)) ?? filteredPlayers.value[0]
-)
-
-const degradationRanking = computed(() => {
-  return filteredPlayers.value
-    .map((p) => ({
-      ...p,
-      degradation: computeSlope(p.timeseries)
-    }))
-    .sort((a, b) => a.degradation - b.degradation)
-    .slice(0, 20)
-})
-
+const clusterRequestId = ref(null)
 const clusterSvg = ref()
 const clusterCanvas = ref()
 const performanceSvg = ref()
 const degradationSvg = ref()
 const treeSvg = ref()
 const featureSvg = ref()
+
 const collapsedTreeNodes = ref(new Set())
 const treeBlueprint = {
   name: 'Start',
@@ -87,6 +55,52 @@ const treeBlueprint = {
 const collapsibleNodeIds = new Set(['root', 'serve-high', 'serve-low'])
 const useCanvas = computed(() => filteredPlayers.value.length > 1500)
 
+const clusterOptions = computed(() => {
+  const labels = [...new Set(players.value.map((p) => p.cluster))]
+  return labels.sort((a, b) => d3.ascending(a, b))
+})
+
+const filteredPlayers = computed(() => {
+  const q = appliedQuery.value
+  return players.value.filter((p) => {
+    const matchesName = p.name.toLowerCase().includes(q.name.toLowerCase())
+    const matchesCluster = q.cluster === 'all' || String(p.cluster) === String(q.cluster)
+    const matchesWinRate = p.winRate >= q.winRateMin && p.winRate <= q.winRateMax
+    return matchesName && matchesCluster && matchesWinRate
+  })
+})
+
+const clusterSummary = computed(() => {
+  const grouped = d3.rollups(
+    filteredPlayers.value,
+    (v) => ({
+      count: v.length,
+      meanWinRate: d3.mean(v, (d) => d.winRate),
+      meanElo: d3.mean(v, (d) => d.currentElo)
+    }),
+    (d) => d.cluster
+  )
+
+  return grouped
+    .map(([cluster, values]) => ({ cluster, ...values }))
+    .sort((a, b) => d3.ascending(a.cluster, b.cluster))
+})
+
+const selectedPlayer = computed(() =>
+  players.value.find((p) => p.id === (selectedPlayerId.value ?? hoveredPlayerId.value)) ?? filteredPlayers.value[0]
+)
+
+const degradationRanking = computed(() => {
+  return filteredPlayers.value
+    .map((p) => ({
+      ...p,
+      degradation: degradationScores.value[p.id]
+    }))
+    .filter((p) => p.degradation !== undefined)
+    .sort((a, b) => a.degradation - b.degradation)
+    .slice(0, 20)
+})
+
 watch(
   () => ({ ...query }),
   () => {
@@ -99,41 +113,192 @@ watch(
 )
 
 watch([filteredPlayers, useCanvas], drawClusterPlot)
-watch(selectedPlayer, drawPerformance)
-watch([degradationRanking, selectedPlayer], drawDegradation)
-
-onMounted(() => {
-  drawClusterPlot()
+watch(selectedSeries, () => {
   drawPerformance()
   drawDegradation()
-  drawTree()
-  drawFeatureImportance()
+})
+watch(selectedPlayerId, () => {
+  loadSelectedPlayerSeries()
+})
+watch(filteredPlayers, () => {
+  hydrateDegradationScores()
 })
 
+onMounted(async () => {
+  drawTree()
+  drawFeatureImportance()
+  await loadDashboardData()
+})
 
-function computeSlope(series) {
-  const xMean = d3.mean(series, (d) => d.season)
-  const yMean = d3.mean(series, (d) => d.elo)
-  let num = 0
-  let den = 0
-  for (const point of series) {
-    num += (point.season - xMean) * (point.elo - yMean)
-    den += (point.season - xMean) ** 2
+async function apiGet(path, params = {}) {
+  const url = new URL(`${API_BASE}${path}`)
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && value !== '') {
+      url.searchParams.set(key, value)
+    }
+  })
+  const response = await fetch(url)
+  if (!response.ok) {
+    const body = await response.text()
+    throw new Error(body || `GET ${path} failed (${response.status})`)
   }
-  return den === 0 ? 0 : num / den
+  return response.json()
+}
+
+async function apiPost(path, payload) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+  if (!response.ok) {
+    const body = await response.text()
+    throw new Error(body || `POST ${path} failed (${response.status})`)
+  }
+  return response.json()
+}
+
+async function loadDashboardData() {
+  loading.value = true
+  loadError.value = ''
+  try {
+    const health = await apiGet('/health')
+    const clusterPayload = {
+      attributes: health.default_attributes,
+      k: 6,
+      distance_metric: 'euclidean',
+      scaling: 'zscore',
+      max_iter: 50,
+      seed: 42,
+      filters: {}
+    }
+    const clusterResult = await apiPost('/cluster', clusterPayload)
+    clusterRequestId.value = clusterResult.cluster_request_id
+
+    const [clusterPlayersResp, playerTableResp] = await Promise.all([
+      apiGet(`/clusters/${clusterResult.cluster_request_id}/players`, { page_size: 2000 }),
+      apiPost('/players/query', { filters: [], limit: 2000, offset: 0, sort_by: 'career_win_pct', sort_order: 'desc' })
+    ])
+
+    const clusterByPlayer = Object.fromEntries(clusterPlayersResp.players.map((p) => [p.player_id, p.cluster_id]))
+
+    players.value = playerTableResp.players
+      .filter((row) => row.player_id in clusterByPlayer)
+      .map((row, idx) => ({
+        id: row.player_id,
+        name: row.player_id,
+        cluster: clusterByPlayer[row.player_id],
+        projectionX: d3.randomNormal(0, 1)(),
+        projectionY: d3.randomNormal(0, 1)(),
+        currentElo: Number(row.elo_pre ?? 0),
+        winRate: Number((row.career_win_pct ?? 0) * 100),
+        _sortIdx: idx
+      }))
+
+    if (players.value.length > 0) {
+      selectedPlayerId.value = players.value[0].id
+      await loadSelectedPlayerSeries()
+      await hydrateDegradationScores()
+    }
+
+    drawClusterPlot()
+  } catch (err) {
+    loadError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadSelectedPlayerSeries() {
+  const player = selectedPlayer.value
+  if (!player?.id) return
+  try {
+    const [eloRes, winRes, aceRes] = await Promise.all([
+      apiGet(`/players/${encodeURIComponent(player.id)}/metrics/timeseries`, { metric: 'elo', limit: 400 }),
+      apiGet(`/players/${encodeURIComponent(player.id)}/metrics/timeseries`, { metric: 'win_pct', limit: 400 }),
+      apiGet(`/players/${encodeURIComponent(player.id)}/metrics/timeseries`, { metric: 'ace_pct', limit: 400 })
+    ])
+
+    const byDate = new Map()
+    for (const point of eloRes.points) {
+      byDate.set(point.match_date, {
+        season: Number(String(point.match_date).slice(0, 4)),
+        elo: Number(point.value ?? 0),
+        winRate: null,
+        aceRate: null
+      })
+    }
+
+    for (const point of winRes.points) {
+      const rec = byDate.get(point.match_date) ?? {
+        season: Number(String(point.match_date).slice(0, 4)),
+        elo: null,
+        winRate: null,
+        aceRate: null
+      }
+      rec.winRate = Number(point.value ?? 0) * 100
+      byDate.set(point.match_date, rec)
+    }
+
+    for (const point of aceRes.points) {
+      const rec = byDate.get(point.match_date) ?? {
+        season: Number(String(point.match_date).slice(0, 4)),
+        elo: null,
+        winRate: null,
+        aceRate: null
+      }
+      rec.aceRate = Number(point.value ?? 0) * 100
+      byDate.set(point.match_date, rec)
+    }
+
+    selectedSeries.value = [...byDate.values()]
+      .filter((d) => d.elo !== null)
+      .sort((a, b) => d3.ascending(a.season, b.season))
+      .map((d, idx, arr) => ({
+        season: d.season + idx / Math.max(arr.length, 1),
+        elo: d.elo ?? 0,
+        winRate: d.winRate ?? 0,
+        aceRate: d.aceRate ?? 0
+      }))
+  } catch {
+    selectedSeries.value = []
+  }
+}
+
+async function hydrateDegradationScores() {
+  const subset = filteredPlayers.value.slice(0, 40)
+  const missingIds = subset
+    .map((p) => p.id)
+    .filter((id) => degradationScores.value[id] === undefined)
+
+  if (missingIds.length === 0) return
+
+  const fetched = await Promise.all(
+    missingIds.map(async (id) => {
+      try {
+        const res = await apiGet(`/players/${encodeURIComponent(id)}/metrics/degradation`, { metric: 'elo', limit: 300 })
+        return [id, Number(res.degradation?.slope ?? 0)]
+      } catch {
+        return [id, 0]
+      }
+    })
+  )
+
+  degradationScores.value = {
+    ...degradationScores.value,
+    ...Object.fromEntries(fetched)
+  }
 }
 
 function drawClusterPlot() {
+  if (!clusterSvg.value) return
+
   const width = 640
   const height = 340
   const margin = { top: 20, right: 20, bottom: 40, left: 50 }
   const data = filteredPlayers.value
 
-  const x = d3
-    .scaleLinear()
-    .domain(d3.extent(players.value, (d) => d.projectionX))
-    .nice()
-    .range([margin.left, width - margin.right])
+  const x = d3.scaleLinear().domain(d3.extent(players.value, (d) => d.projectionX)).nice().range([margin.left, width - margin.right])
 
   const y = d3
     .scaleLinear()
@@ -141,7 +306,7 @@ function drawClusterPlot() {
     .nice()
     .range([height - margin.bottom, margin.top])
 
-  const color = d3.scaleOrdinal(d3.schemeTableau10).domain(['A', 'B', 'C', 'D', 'E'])
+  const color = d3.scaleOrdinal(d3.schemeTableau10).domain(clusterOptions.value)
 
   if (useCanvas.value && clusterCanvas.value) {
     const ctx = clusterCanvas.value.getContext('2d')
@@ -161,15 +326,9 @@ function drawClusterPlot() {
   const svg = d3.select(clusterSvg.value).attr('viewBox', `0 0 ${width} ${height}`)
   svg.selectAll('*').remove()
 
-  svg
-    .append('g')
-    .attr('transform', `translate(0,${height - margin.bottom})`)
-    .call(d3.axisBottom(x))
+  svg.append('g').attr('transform', `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x))
 
-  svg
-    .append('g')
-    .attr('transform', `translate(${margin.left},0)`)
-    .call(d3.axisLeft(y))
+  svg.append('g').attr('transform', `translate(${margin.left},0)`).call(d3.axisLeft(y))
 
   if (!useCanvas.value) {
     svg
@@ -192,8 +351,8 @@ function drawClusterPlot() {
 }
 
 function drawPerformance() {
-  const player = selectedPlayer.value
-  if (!player || !performanceSvg.value) return
+  const data = selectedSeries.value
+  if (!data?.length || !performanceSvg.value) return
 
   const metrics = ['elo', 'winRate', 'aceRate']
   const colors = d3.scaleOrdinal().domain(metrics).range(['#1f77b4', '#2ca02c', '#d62728'])
@@ -201,7 +360,6 @@ function drawPerformance() {
   const height = 300
   const margin = { top: 16, right: 20, bottom: 42, left: 48 }
 
-  const data = player.timeseries
   const x = d3
     .scaleLinear()
     .domain(d3.extent(data, (d) => d.season))
@@ -209,7 +367,7 @@ function drawPerformance() {
 
   const y = d3
     .scaleLinear()
-    .domain([0, d3.max(data, (d) => Math.max(d.elo / 20, d.winRate, d.aceRate * 2))])
+    .domain([0, d3.max(data, (d) => Math.max(d.elo / 20, d.winRate, d.aceRate))])
     .nice()
     .range([height - margin.bottom, margin.top])
 
@@ -217,13 +375,13 @@ function drawPerformance() {
   svg.selectAll('*').remove()
 
   const g = svg.append('g')
-  const axisX = g.append('g').attr('transform', `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x))
+  const axisX = g.append('g').attr('transform', `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x).tickFormat(d3.format('d')))
   g.append('g').attr('transform', `translate(${margin.left},0)`).call(d3.axisLeft(y))
 
   const lines = [
     { key: 'elo', accessor: (d) => d.elo / 20 },
     { key: 'winRate', accessor: (d) => d.winRate },
-    { key: 'aceRate', accessor: (d) => d.aceRate * 2 }
+    { key: 'aceRate', accessor: (d) => d.aceRate }
   ]
 
   g.selectAll('.metric-line')
@@ -253,7 +411,7 @@ function drawPerformance() {
       const [x0, x1] = event.selection
       const newDomain = [x.invert(x0), x.invert(x1)]
       x.domain(newDomain)
-      axisX.call(d3.axisBottom(x))
+      axisX.call(d3.axisBottom(x).tickFormat(d3.format('d')))
       g.selectAll('.metric-line').attr(
         'd',
         (metric) =>
@@ -268,39 +426,30 @@ function drawPerformance() {
 }
 
 function drawDegradation() {
-  if (!degradationSvg.value) return
-  const rankData = degradationRanking.value
-  const chosen = selectedPlayer.value ?? rankData[0]
-  if (!chosen) return
+  if (!degradationSvg.value || !selectedSeries.value?.length) return
 
   const width = 640
   const height = 220
   const margin = { top: 20, right: 20, bottom: 36, left: 46 }
   const x = d3
     .scaleLinear()
-    .domain(d3.extent(chosen.timeseries, (d) => d.season))
+    .domain(d3.extent(selectedSeries.value, (d) => d.season))
     .range([margin.left, width - margin.right])
 
   const y = d3
     .scaleLinear()
-    .domain(d3.extent(chosen.timeseries, (d) => d.elo))
+    .domain(d3.extent(selectedSeries.value, (d) => d.elo))
     .nice()
     .range([height - margin.bottom, margin.top])
 
   const svg = d3.select(degradationSvg.value).attr('viewBox', `0 0 ${width} ${height}`)
   svg.selectAll('*').remove()
-  svg
-    .append('g')
-    .attr('transform', `translate(0,${height - margin.bottom})`)
-    .call(d3.axisBottom(x).tickFormat(d3.format('d')))
-  svg
-    .append('g')
-    .attr('transform', `translate(${margin.left},0)`)
-    .call(d3.axisLeft(y))
+  svg.append('g').attr('transform', `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x).tickFormat(d3.format('d')))
+  svg.append('g').attr('transform', `translate(${margin.left},0)`).call(d3.axisLeft(y))
 
   svg
     .append('path')
-    .datum(chosen.timeseries)
+    .datum(selectedSeries.value)
     .attr('fill', 'none')
     .attr('stroke', '#7c3aed')
     .attr('stroke-width', 2)
@@ -392,10 +541,7 @@ function drawFeatureImportance() {
   const svg = d3.select(featureSvg.value).attr('viewBox', `0 0 ${width} ${height}`)
   svg.selectAll('*').remove()
 
-  svg
-    .append('g')
-    .attr('transform', `translate(0,${height - margin.bottom})`)
-    .call(d3.axisBottom(x).ticks(5).tickFormat(d3.format('.0%')))
+  svg.append('g').attr('transform', `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x).ticks(5).tickFormat(d3.format('.0%')))
 
   svg.append('g').attr('transform', `translate(${margin.left},0)`).call(d3.axisLeft(y))
 
@@ -410,31 +556,6 @@ function drawFeatureImportance() {
     .attr('width', (d) => x(d.value) - margin.left)
     .attr('fill', '#0ea5e9')
 }
-
-function buildMockPlayers(count) {
-  const clusters = ['A', 'B', 'C', 'D', 'E']
-  return Array.from({ length: count }, (_, idx) => {
-    const baseElo = 1450 + Math.random() * 550
-    const trend = -8 + Math.random() * 14
-    const timeseries = d3.range(2016, 2027).map((season) => ({
-      season,
-      elo: baseElo + trend * (season - 2016) + (Math.random() * 50 - 25),
-      winRate: 45 + Math.random() * 45,
-      aceRate: 2 + Math.random() * 10
-    }))
-
-    return {
-      id: idx + 1,
-      name: `Player ${idx + 1}`,
-      cluster: clusters[idx % clusters.length],
-      projectionX: d3.randomNormal(0, 1)(),
-      projectionY: d3.randomNormal(0, 1)(),
-      currentElo: timeseries[timeseries.length - 1].elo,
-      winRate: timeseries[timeseries.length - 1].winRate,
-      timeseries
-    }
-  })
-}
 </script>
 
 <template>
@@ -443,6 +564,8 @@ function buildMockPlayers(count) {
 
     <section class="panel">
       <h2>Cluster Search / Query</h2>
+      <p v-if="loading" class="subtle">Loading player data from API…</p>
+      <p v-if="loadError" class="error-text">{{ loadError }}</p>
       <div class="filters">
         <label>
           Player name
@@ -452,21 +575,17 @@ function buildMockPlayers(count) {
           Cluster
           <select v-model="query.cluster">
             <option value="all">All</option>
-            <option value="A">A</option>
-            <option value="B">B</option>
-            <option value="C">C</option>
-            <option value="D">D</option>
-            <option value="E">E</option>
+            <option v-for="cluster in clusterOptions" :key="cluster" :value="cluster">{{ cluster }}</option>
           </select>
         </label>
         <label>
           Win rate min
-          <input type="range" min="30" max="95" step="1" v-model.number="query.winRateMin" />
+          <input type="range" min="0" max="100" step="1" v-model.number="query.winRateMin" />
           {{ query.winRateMin }}%
         </label>
         <label>
           Win rate max
-          <input type="range" min="35" max="100" step="1" v-model.number="query.winRateMax" />
+          <input type="range" min="0" max="100" step="1" v-model.number="query.winRateMax" />
           {{ query.winRateMax }}%
         </label>
       </div>
@@ -474,7 +593,7 @@ function buildMockPlayers(count) {
 
     <section class="panel">
       <h2>Cluster Overview</h2>
-      <p class="subtle">Scatter projection using D3 joins; canvas fallback enabled for high point counts.</p>
+      <p class="subtle">Clusters and player table are loaded from FastAPI endpoints on localhost:8000.</p>
       <canvas v-show="useCanvas" ref="clusterCanvas" class="chart"></canvas>
       <svg ref="clusterSvg" class="chart"></svg>
       <div class="summary-grid">
@@ -489,7 +608,7 @@ function buildMockPlayers(count) {
 
     <section class="panel">
       <h2>Player Performance View</h2>
-      <p class="subtle">Multi-metric trend lines with brush-to-zoom behavior.</p>
+      <p class="subtle">Trend lines are pulled from `/players/{id}/metrics/timeseries`.</p>
       <p v-if="selectedPlayer">Focused Player: <strong>{{ selectedPlayer.name }}</strong></p>
       <svg ref="performanceSvg" class="chart"></svg>
     </section>
@@ -506,7 +625,7 @@ function buildMockPlayers(count) {
             @click="selectedPlayerId = player.id"
           >
             <span>{{ player.name }}</span>
-            <span>{{ player.degradation.toFixed(2) }}</span>
+            <span>{{ player.degradation?.toFixed(3) ?? '—' }}</span>
           </li>
         </ul>
       </div>

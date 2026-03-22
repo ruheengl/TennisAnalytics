@@ -95,3 +95,7 @@ select {
   color: #6b7280;
   margin-top: 0;
 }
+
+.error-text {
+  color: #b91c1c;
+}
