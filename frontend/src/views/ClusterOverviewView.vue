@@ -5,7 +5,9 @@ import * as d3 from 'd3'
 const props = defineProps({
   clusterResult: { type: Object, required: true },
   players: { type: Array, required: true },
-  clusterPlayers: { type: Array, required: true }
+  clusterPlayers: { type: Array, required: true },
+  clusteringConfig: { type: Object, required: true },
+  projectionMetadata: { type: Object, required: true }
 })
 
 const svgRef = ref()
@@ -35,6 +37,16 @@ const summaries = computed(() => {
 
   return grouped.map(([cluster, values]) => ({ cluster, ...values }))
 })
+
+const xAxisLabel = computed(() => props.projectionMetadata.xAttribute || 'service_points_won_pct')
+const yAxisLabel = computed(() => props.projectionMetadata.yAttribute || 'return_points_won_pct')
+
+watch(
+  () => props.clusterResult.cluster_request_id,
+  () => {
+    selectedCluster.value = 'all'
+  }
+)
 
 function drawScatter() {
   const svg = d3.select(svgRef.value)
@@ -87,7 +99,7 @@ function drawScatter() {
     .attr('x', width / 2)
     .attr('y', height - 10)
     .attr('text-anchor', 'middle')
-    .text('Service points won % (projection X)')
+    .text(`${xAxisLabel.value} (projection X)`)
 
   svg
     .append('text')
@@ -95,17 +107,22 @@ function drawScatter() {
     .attr('y', 18)
     .attr('transform', 'rotate(-90)')
     .attr('text-anchor', 'middle')
-    .text('Return points won % (projection Y)')
+    .text(`${yAxisLabel.value} (projection Y)`)
 }
 
 onMounted(drawScatter)
 watch(filtered, drawScatter)
+watch(xAxisLabel, drawScatter)
+watch(yAxisLabel, drawScatter)
 </script>
 
 <template>
   <section class="panel">
     <h2>Cluster projection overview</h2>
-    <p class="subtle">Scatter projection by service vs return strength, colored by cluster labels from the API.</p>
+    <p class="subtle">
+      Active run uses <strong>{{ clusteringConfig.algorithm }}</strong> with
+      {{ clusteringConfig.attributes.length }} attributes.
+    </p>
 
     <label class="inline-filter">
       Cluster

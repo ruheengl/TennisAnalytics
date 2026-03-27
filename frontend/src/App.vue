@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { apiGet, apiPost } from './services/api'
 import ClusterOverviewView from './views/ClusterOverviewView.vue'
 import ClusterSearchView from './views/ClusterSearchView.vue'
@@ -25,6 +25,60 @@ const clusterPlayers = ref([])
 const playerRows = ref([])
 const clusterByPlayer = ref({})
 
+const selectedAttributes = ref([])
+const algorithm = ref('kmeans')
+const k = ref(6)
+const maxIter = ref(50)
+const seed = ref(42)
+const eps = ref(0.35)
+const minSamples = ref(5)
+const linkage = ref('average')
+const distanceMetric = ref('euclidean')
+const scaling = ref('zscore')
+
+const availableAttributes = computed(() => health.value?.default_attributes ?? [])
+
+const projectionMetadata = computed(() => {
+  const [xAttribute, yAttribute] = selectedAttributes.value
+  return {
+    xAttribute: xAttribute ?? null,
+    yAttribute: yAttribute ?? null,
+    hasProjectionAxes: Boolean(xAttribute && yAttribute)
+  }
+})
+
+const selectedParams = computed(() => {
+  if (algorithm.value === 'dbscan') {
+    return {
+      eps: Number(eps.value),
+      min_samples: Number(minSamples.value)
+    }
+  }
+
+  if (algorithm.value === 'hierarchical') {
+    return {
+      k: Number(k.value),
+      linkage: linkage.value
+    }
+  }
+
+  return {
+    k: Number(k.value),
+    max_iter: Number(maxIter.value),
+    seed: Number(seed.value)
+  }
+})
+
+const activeClusteringConfig = computed(() => ({
+  attributes: [...selectedAttributes.value],
+  algorithm: algorithm.value,
+  params: selectedParams.value,
+  distance_metric: distanceMetric.value,
+  scaling: scaling.value
+}))
+
+const canRunClustering = computed(() => selectedAttributes.value.length > 0)
+
 const enrichedPlayers = computed(() => {
   return playerRows.value
     .filter((row) => clusterByPlayer.value[row.player_id] !== undefined)
@@ -34,28 +88,78 @@ const enrichedPlayers = computed(() => {
     }))
 })
 
-onMounted(loadBootstrapData)
+onMounted(loadInitialState)
 
-async function loadBootstrapData() {
+watch(
+  availableAttributes,
+  (attrs) => {
+    if (!attrs.length) return
+    if (!selectedAttributes.value.length) {
+      selectedAttributes.value = [...attrs]
+    }
+  },
+  { immediate: true }
+)
+
+function normalizeParamsForPayload() {
+  if (algorithm.value === 'dbscan') {
+    return {
+      eps: Number(eps.value),
+      min_samples: Number(minSamples.value)
+    }
+  }
+
+  if (algorithm.value === 'hierarchical') {
+    return {
+      k: Number(k.value),
+      linkage: linkage.value
+    }
+  }
+
+  return {
+    k: Number(k.value),
+    max_iter: Number(maxIter.value),
+    seed: Number(seed.value)
+  }
+}
+
+async function loadInitialState() {
   loading.value = true
   error.value = ''
 
   try {
     health.value = await apiGet('/health')
-    const attributes = health.value.default_attributes ?? []
+    if (!selectedAttributes.value.length) {
+      selectedAttributes.value = [...(health.value.default_attributes ?? [])]
+    }
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    loading.value = false
+  }
+}
 
-    clusterResult.value = await apiPost('/cluster', {
-      attributes,
-      k: 6,
-      distance_metric: 'euclidean',
-      scaling: 'zscore',
-      max_iter: 50,
-      seed: 42,
+async function runClustering() {
+  if (!canRunClustering.value) return
+
+  loading.value = true
+  error.value = ''
+
+  try {
+    const payload = {
+      attributes: [...selectedAttributes.value],
+      algorithm: algorithm.value,
+      params: normalizeParamsForPayload(),
+      distance_metric: distanceMetric.value,
+      scaling: scaling.value,
       filters: {}
-    })
+    }
+
+    clusterResult.value = await apiPost('/cluster', payload)
+    const clusterRequestId = clusterResult.value.cluster_request_id
 
     const [clusterPlayersResp, playersResp] = await Promise.all([
-      apiGet(`/clusters/${clusterResult.value.cluster_request_id}/players`, {
+      apiGet(`/clusters/${clusterRequestId}/players`, {
         page: 1,
         page_size: 2500
       }),
@@ -64,7 +168,8 @@ async function loadBootstrapData() {
         limit: 2500,
         offset: 0,
         sort_by: 'career_win_pct',
-        sort_order: 'desc'
+        sort_order: 'desc',
+        cluster_request_id: clusterRequestId
       })
     ])
 
@@ -86,8 +191,91 @@ async function loadBootstrapData() {
         <h1>Tennis Player Analytics</h1>
         <p class="subtle">D3 + Vue views powered by live API endpoints.</p>
       </div>
-      <button class="secondary" @click="loadBootstrapData" :disabled="loading">Refresh Data</button>
+      <button class="secondary" @click="loadInitialState" :disabled="loading">Refresh Health</button>
     </header>
+
+    <section class="panel">
+      <h2>Clustering configuration</h2>
+      <div class="filters">
+        <label>
+          Attributes
+          <select v-model="selectedAttributes" multiple size="6">
+            <option v-for="attributeName in availableAttributes" :key="attributeName" :value="attributeName">
+              {{ attributeName }}
+            </option>
+          </select>
+        </label>
+
+        <label>
+          Algorithm
+          <select v-model="algorithm">
+            <option value="kmeans">kmeans</option>
+            <option value="gmm">gmm</option>
+            <option value="dbscan">dbscan</option>
+            <option value="hierarchical">hierarchical</option>
+          </select>
+        </label>
+
+        <label>
+          Distance metric
+          <select v-model="distanceMetric">
+            <option value="euclidean">euclidean</option>
+            <option value="manhattan">manhattan</option>
+            <option value="cosine">cosine</option>
+          </select>
+        </label>
+
+        <label>
+          Scaling
+          <select v-model="scaling">
+            <option value="none">none</option>
+            <option value="zscore">zscore</option>
+            <option value="minmax">minmax</option>
+          </select>
+        </label>
+
+        <label v-if="algorithm !== 'dbscan'">
+          k
+          <input v-model.number="k" type="number" min="2" max="30" step="1" />
+        </label>
+
+        <template v-if="algorithm === 'kmeans' || algorithm === 'gmm'">
+          <label>
+            max_iter
+            <input v-model.number="maxIter" type="number" min="1" step="1" />
+          </label>
+          <label>
+            seed
+            <input v-model.number="seed" type="number" step="1" />
+          </label>
+        </template>
+
+        <template v-else-if="algorithm === 'dbscan'">
+          <label>
+            eps
+            <input v-model.number="eps" type="number" min="0.0001" step="0.01" />
+          </label>
+          <label>
+            min_samples
+            <input v-model.number="minSamples" type="number" min="1" step="1" />
+          </label>
+        </template>
+
+        <label v-else-if="algorithm === 'hierarchical'">
+          linkage
+          <select v-model="linkage">
+            <option value="average">average</option>
+            <option value="complete">complete</option>
+            <option value="single">single</option>
+          </select>
+        </label>
+      </div>
+
+      <button @click="runClustering" :disabled="loading || !canRunClustering">Run clustering</button>
+      <p class="subtle" v-if="clusterResult">
+        Active cluster request: <strong>{{ clusterResult.cluster_request_id }}</strong>
+      </p>
+    </section>
 
     <nav class="tabs panel">
       <button
@@ -103,18 +291,23 @@ async function loadBootstrapData() {
 
     <section v-if="loading" class="panel">Loading data from API...</section>
     <section v-else-if="error" class="panel error-text">{{ error }}</section>
+    <section v-else-if="!clusterResult" class="panel">Select clustering settings and run clustering to load views.</section>
 
     <ClusterOverviewView
       v-else-if="activeTab === 'overview'"
       :cluster-result="clusterResult"
       :players="enrichedPlayers"
       :cluster-players="clusterPlayers"
+      :clustering-config="activeClusteringConfig"
+      :projection-metadata="projectionMetadata"
     />
 
     <ClusterSearchView
       v-else-if="activeTab === 'search'"
       :cluster-result="clusterResult"
       :players="enrichedPlayers"
+      :clustering-config="activeClusteringConfig"
+      :projection-metadata="projectionMetadata"
     />
 
     <PlayerPerformanceView
