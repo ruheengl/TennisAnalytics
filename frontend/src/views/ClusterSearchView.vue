@@ -23,6 +23,10 @@ const queryTotal = ref(0)
 const queryError = ref('')
 
 const clusters = computed(() => [...new Set(props.players.map((p) => p.cluster_id))].sort((a, b) => a - b))
+const projectionSummary = computed(() => {
+  const ratios = props.projectionMetadata.explainedVarianceRatio ?? [0, 0]
+  return `PC1 ${(Number(ratios[0]) * 100).toFixed(1)}% · PC2 ${(Number(ratios[1]) * 100).toFixed(1)}%`
+})
 
 watch(
   () => props.clusterResult.cluster_request_id,
@@ -108,7 +112,7 @@ async function runFilterQuery() {
     <article class="panel nested">
       <h2>Attribute filters</h2>
       <p class="subtle">
-        Projection axes: {{ projectionMetadata.xAttribute || 'N/A' }} / {{ projectionMetadata.yAttribute || 'N/A' }}
+        Projection variance: {{ projectionSummary }}
       </p>
       <div class="filters">
         <label>

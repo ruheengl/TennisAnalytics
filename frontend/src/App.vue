@@ -39,11 +39,13 @@ const scaling = ref('zscore')
 const availableAttributes = computed(() => health.value?.default_attributes ?? [])
 
 const projectionMetadata = computed(() => {
-  const [xAttribute, yAttribute] = selectedAttributes.value
+  const projection = clusterResult.value?.projection
+  const explainedVarianceRatio = projection?.explained_variance_ratio ?? [0, 0]
+  const topLoadings = projection?.top_absolute_loadings ?? [[], []]
   return {
-    xAttribute: xAttribute ?? null,
-    yAttribute: yAttribute ?? null,
-    hasProjectionAxes: Boolean(xAttribute && yAttribute)
+    explainedVarianceRatio,
+    topLoadings,
+    hasProjectionAxes: Boolean(projection)
   }
 })
 
@@ -80,11 +82,18 @@ const activeClusteringConfig = computed(() => ({
 const canRunClustering = computed(() => selectedAttributes.value.length > 0)
 
 const enrichedPlayers = computed(() => {
+  const projectionPoints = clusterResult.value?.projection?.points ?? []
+  const projectionByPlayer = Object.fromEntries(
+    projectionPoints.map((point) => [point.player_id, point])
+  )
+
   return playerRows.value
     .filter((row) => clusterByPlayer.value[row.player_id] !== undefined)
     .map((row) => ({
       ...row,
-      cluster_id: clusterByPlayer.value[row.player_id]
+      cluster_id: clusterByPlayer.value[row.player_id],
+      pc1: Number(projectionByPlayer[row.player_id]?.pc1 ?? 0),
+      pc2: Number(projectionByPlayer[row.player_id]?.pc2 ?? 0)
     }))
 })
 

@@ -109,6 +109,7 @@ class ClusterCacheEntry:
     algorithm: str
     prototypes: Optional[np.ndarray]
     vectors: np.ndarray
+    projection: Dict[str, Any]
     quality: Dict[str, Any]
     created_at: float
 
@@ -543,6 +544,57 @@ def _rows_to_matrix(rows: List[sqlite3.Row], columns: List[str]) -> Tuple[List[s
     return player_ids, np.asarray(vectors, dtype=np.float64)
 
 
+def _compute_pca_projection(matrix: np.ndarray, feature_columns: List[str]) -> Dict[str, Any]:
+    n, d = matrix.shape
+    k = min(2, d)
+    centered = matrix - np.mean(matrix, axis=0, keepdims=True)
+
+    if n <= 1:
+        components = np.zeros((k, d), dtype=np.float64)
+        scores = np.zeros((n, k), dtype=np.float64)
+        explained = np.zeros(k, dtype=np.float64)
+    else:
+        _, singular_values, vh = np.linalg.svd(centered, full_matrices=False)
+        components = vh[:k]
+        scores = centered @ components.T
+        variance = (singular_values**2) / (n - 1)
+        total_variance = float(np.sum(variance))
+        explained = (
+            variance[:k] / total_variance
+            if total_variance > 0
+            else np.zeros(k, dtype=np.float64)
+        )
+
+    if k < 2:
+        components = np.pad(components, ((0, 2 - k), (0, 0)))
+        scores = np.pad(scores, ((0, 0), (0, 2 - k)))
+        explained = np.pad(explained, (0, 2 - k))
+
+    component_loadings: List[Dict[str, float]] = []
+    top_loadings: List[List[Dict[str, Any]]] = []
+    for comp in range(2):
+        loading_map = {
+            feature: float(weight)
+            for feature, weight in zip(feature_columns, components[comp].tolist())
+        }
+        component_loadings.append(loading_map)
+
+        ranked = sorted(loading_map.items(), key=lambda item: abs(item[1]), reverse=True)[:3]
+        top_loadings.append(
+            [
+                {"attribute": attr, "loading": float(weight)}
+                for attr, weight in ranked
+            ]
+        )
+
+    return {
+        "explained_variance_ratio": [float(explained[0]), float(explained[1])],
+        "component_loadings": component_loadings,
+        "top_absolute_loadings": top_loadings,
+        "coordinates": scores[:, :2],
+    }
+
+
 def _load_metric_points(
     player_id: str,
     metric: str,
@@ -613,6 +665,7 @@ def _load_cluster(req: ClusterRequest) -> ClusterCacheEntry:
     labels = result["labels"]
     prototypes = result["prototypes"]
     quality = result["quality"]
+    projection = _compute_pca_projection(scaled, normalized["attributes"])
 
     entry = ClusterCacheEntry(
         request_id=request_id,
@@ -623,6 +676,7 @@ def _load_cluster(req: ClusterRequest) -> ClusterCacheEntry:
         algorithm=algorithm,
         prototypes=prototypes,
         vectors=scaled,
+        projection=projection,
         quality=quality,
         created_at=time(),
     )
@@ -699,6 +753,11 @@ def create_cluster(req: ClusterRequest) -> Dict[str, Any]:
         "distance_metric": entry.normalized_payload["distance_metric"],
         "scaling": entry.normalized_payload["scaling"],
         "metadata": {
+            "projection": {
+                "explained_variance_ratio": entry.projection["explained_variance_ratio"],
+                "component_loadings": entry.projection["component_loadings"],
+                "top_absolute_loadings": entry.projection["top_absolute_loadings"],
+            },
             "quality": {
                 "inertia": entry.quality["inertia"],
                 "mean_confidence": entry.quality["mean_confidence"],
@@ -714,6 +773,43 @@ def create_cluster(req: ClusterRequest) -> Dict[str, Any]:
                 }
                 for pid, label, score in zip(entry.player_ids[:1000], entry.labels[:1000], conf[:1000])
             ],
+        },
+        "projection": {
+            "points": [
+                {
+                    "player_id": pid,
+                    "pc1": float(coords[0]),
+                    "pc2": float(coords[1]),
+                }
+                for pid, coords in zip(entry.player_ids, entry.projection["coordinates"])
+            ],
+            "explained_variance_ratio": entry.projection["explained_variance_ratio"],
+            "component_loadings": entry.projection["component_loadings"],
+            "top_absolute_loadings": entry.projection["top_absolute_loadings"],
+        },
+    }
+
+
+@app.get("/clusters/{cluster_request_id}/projection")
+def cluster_projection(cluster_request_id: str) -> Dict[str, Any]:
+    entry = _cluster_cache.get(cluster_request_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Unknown cluster_request_id")
+
+    return {
+        "cluster_request_id": cluster_request_id,
+        "projection": {
+            "points": [
+                {
+                    "player_id": pid,
+                    "pc1": float(coords[0]),
+                    "pc2": float(coords[1]),
+                }
+                for pid, coords in zip(entry.player_ids, entry.projection["coordinates"])
+            ],
+            "explained_variance_ratio": entry.projection["explained_variance_ratio"],
+            "component_loadings": entry.projection["component_loadings"],
+            "top_absolute_loadings": entry.projection["top_absolute_loadings"],
         },
     }
 
