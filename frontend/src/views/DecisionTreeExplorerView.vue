@@ -16,6 +16,7 @@ const explanation = ref(null)
 const error = ref('')
 
 const options = computed(() => props.players.map((p) => p.player_id))
+const pathSummary = computed(() => explanation.value?.path_summary ?? null)
 
 onMounted(async () => {
   if (!selectedPlayer.value && options.value.length > 0) {
@@ -49,20 +50,72 @@ async function loadPrediction() {
 }
 
 function treeData() {
-  const rules = explanation.value?.path_summary?.rules ?? []
-  let node = { name: 'root', id: 'root', children: [] }
-  const root = node
-  rules.forEach((rule, idx) => {
-    const child = {
-      name: `${rule.feature} ${rule.operator} ${rule.threshold.toFixed(3)}`,
-      id: `rule-${idx}`,
-      children: []
+  const payload =
+    explanation.value?.tree ?? explanation.value?.tree_structure ?? explanation.value?.hierarchical_tree ?? null
+  if (!payload || typeof payload !== 'object') return null
+
+  function asNumber(value) {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : null
+  }
+
+  function nodeId(node, fallback) {
+    const rawId =
+      node.id ?? node.node_id ?? node.nodeId ?? node.tree_id ?? node.treeId ?? node.idx ?? node.index ?? fallback
+    return String(rawId)
+  }
+
+  function buildNode(node, fallback = 'root') {
+    if (!node || typeof node !== 'object') return null
+
+    const id = nodeId(node, fallback)
+    const splitFeature = node.split_feature ?? node.feature ?? node.feature_name ?? node.splitFeature ?? null
+    const threshold = asNumber(node.threshold ?? node.split_threshold ?? node.splitThreshold)
+    const leafMetadata = node.leaf_metadata ?? node.leaf ?? node.leaf_info ?? node.leafInfo ?? null
+    const leftRaw = node.left_child ?? node.left ?? node.leftChild ?? null
+    const rightRaw = node.right_child ?? node.right ?? node.rightChild ?? null
+
+    const left = buildNode(leftRaw, `${id}-left`)
+    const right = buildNode(rightRaw, `${id}-right`)
+    const children = [left, right].filter(Boolean)
+    const isLeaf = Boolean(node.is_leaf) || (!left && !right)
+
+    const name = isLeaf
+      ? `Leaf ${leafMetadata?.leaf_id ?? leafMetadata?.leafId ?? id}`
+      : `${splitFeature ?? 'feature'} <= ${(threshold ?? 0).toFixed(3)}`
+
+    return {
+      id,
+      name,
+      splitFeature,
+      threshold,
+      leafMetadata,
+      isLeaf,
+      children
     }
-    node.children = [child]
-    node = child
-  })
-  node.children = [{ name: `Leaf ${explanation.value?.path_summary?.leaf_id ?? '-'}`, id: 'leaf', children: [] }]
-  return root
+  }
+
+  return buildNode(payload)
+}
+
+function activePathIds(treeRoot) {
+  const pathIds = new Set((explanation.value?.path_summary?.node_ids ?? []).map((id) => String(id)))
+  if (pathIds.size) return pathIds
+
+  const row = props.players.find((p) => p.player_id === selectedPlayer.value)
+  if (!row || !treeRoot) return pathIds
+
+  let node = treeRoot
+  while (node) {
+    pathIds.add(String(node.id))
+    if (node.isLeaf || !node.children?.length) break
+
+    const value = Number(row[node.splitFeature])
+    if (!Number.isFinite(value) || !Number.isFinite(node.threshold) || node.children.length < 2) break
+
+    node = value <= node.threshold ? node.children[0] : node.children[1]
+  }
+  return pathIds
 }
 
 function drawTree() {
@@ -70,7 +123,11 @@ function drawTree() {
   svg.selectAll('*').remove()
   if (!explanation.value) return
 
-  const fullRoot = d3.hierarchy(treeData())
+  const treeRoot = treeData()
+  if (!treeRoot) return
+
+  const fullRoot = d3.hierarchy(treeRoot)
+  const highlightedNodeIds = activePathIds(treeRoot)
   d3.tree().nodeSize([180, 70])(fullRoot)
 
   const hiddenIds = collapsed.value
@@ -81,6 +138,11 @@ function drawTree() {
   const links = fullRoot
     .links()
     .filter((link) => visibleIds.has(link.source.data.id) && visibleIds.has(link.target.data.id))
+  const highlightedLinkIds = new Set(
+    links
+      .filter((link) => highlightedNodeIds.has(String(link.source.data.id)) && highlightedNodeIds.has(String(link.target.data.id)))
+      .map((link) => `${link.source.data.id}->${link.target.data.id}`)
+  )
 
   const minX = d3.min(visibleNodes, (node) => node.x) ?? 0
   const maxX = d3.max(visibleNodes, (node) => node.x) ?? 0
@@ -100,8 +162,12 @@ function drawTree() {
     .data(links)
     .join('path')
     .attr('fill', 'none')
-    .attr('stroke', '#94a3b8')
-    .attr('stroke-width', 1.5)
+    .attr('stroke', (d) =>
+      highlightedLinkIds.has(`${d.source.data.id}->${d.target.data.id}`) ? '#f97316' : '#94a3b8'
+    )
+    .attr('stroke-width', (d) =>
+      highlightedLinkIds.has(`${d.source.data.id}->${d.target.data.id}`) ? 3 : 1.5
+    )
     .attr('d', (d) => d3.linkVertical()({ source: [d.source.x, d.source.y], target: [d.target.x, d.target.y] }))
 
   const nodes = graph
@@ -112,6 +178,7 @@ function drawTree() {
     .attr('transform', (d) => `translate(${d.x},${d.y})`)
     .style('cursor', 'pointer')
     .on('click', (_, d) => {
+      if (!d.children?.length) return
       const next = new Set(collapsed.value)
       if (next.has(d.data.id)) {
         next.delete(d.data.id)
@@ -121,7 +188,15 @@ function drawTree() {
       collapsed.value = next
     })
 
-  nodes.append('circle').attr('r', 7).attr('fill', (d) => (collapsed.value.has(d.data.id) ? '#dc2626' : '#2563eb'))
+  nodes
+    .append('circle')
+    .attr('r', 7)
+    .attr('fill', (d) => {
+      if (highlightedNodeIds.has(String(d.data.id))) return '#fdba74'
+      return collapsed.value.has(d.data.id) ? '#dc2626' : '#2563eb'
+    })
+    .attr('stroke', (d) => (highlightedNodeIds.has(String(d.data.id)) ? '#ea580c' : '#1e293b'))
+    .attr('stroke-width', (d) => (highlightedNodeIds.has(String(d.data.id)) ? 2.5 : 1))
   nodes
     .append('text')
     .attr('dy', -10)
@@ -158,6 +233,11 @@ function drawBars() {
     .attr('height', y.bandwidth())
     .attr('fill', '#0ea5e9')
 }
+
+function formatFixed(value, digits = 3) {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric.toFixed(digits) : '-'
+}
 </script>
 
 <template>
@@ -172,8 +252,21 @@ function drawBars() {
       </label>
     </div>
     <p v-if="error" class="error-text">{{ error }}</p>
-    <h3>Collapsible tree (decision path)</h3>
+    <h3>Collapsible tree (full model structure + active path)</h3>
     <svg ref="treeSvg" class="chart"></svg>
+    <div v-if="pathSummary" class="path-summary">
+      <h3>Selected player path summary</h3>
+      <p>
+        Leaf {{ pathSummary.leaf_id ?? '-' }} · Samples {{ pathSummary.sample_count ?? '-' }} · Leaf win probability
+        {{ pathSummary.leaf_win_probability == null ? '-' : formatFixed(pathSummary.leaf_win_probability) }}
+      </p>
+      <ol>
+        <li v-for="(rule, idx) in pathSummary.rules ?? []" :key="`${rule.feature}-${idx}`">
+          {{ rule.feature }} {{ rule.operator }} {{ formatFixed(rule.threshold) }}
+          (value: {{ formatFixed(rule.value) }})
+        </li>
+      </ol>
+    </div>
     <h3>Feature importance bars</h3>
     <svg ref="barSvg" class="chart"></svg>
   </section>
