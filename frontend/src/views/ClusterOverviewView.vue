@@ -51,8 +51,18 @@ function componentLabel(componentIndex) {
   return `PC${componentIndex + 1} (${varianceText}): ${loadingText}`
 }
 
-const xAxisLabel = computed(() => componentLabel(0))
-const yAxisLabel = computed(() => componentLabel(1))
+const xAxisLabel = 'Playing style dimension 1'
+const yAxisLabel = 'Playing style dimension 2'
+
+const projectionComponents = computed(() => {
+  const varianceCount = props.projectionMetadata.explainedVarianceRatio?.length ?? 0
+  const loadingCount = props.projectionMetadata.topLoadings?.length ?? 0
+  const count = Math.max(varianceCount, loadingCount, 2)
+  return Array.from({ length: count }, (_, index) => ({
+    index,
+    label: componentLabel(index)
+  }))
+})
 
 watch(
   () => props.clusterResult.cluster_request_id,
@@ -112,7 +122,7 @@ function drawScatter() {
     .attr('x', width / 2)
     .attr('y', height - 10)
     .attr('text-anchor', 'middle')
-    .text(xAxisLabel.value)
+    .text(xAxisLabel)
 
   svg
     .append('text')
@@ -120,13 +130,11 @@ function drawScatter() {
     .attr('y', 18)
     .attr('transform', 'rotate(-90)')
     .attr('text-anchor', 'middle')
-    .text(yAxisLabel.value)
+    .text(yAxisLabel)
 }
 
 onMounted(drawScatter)
 watch(filtered, drawScatter)
-watch(xAxisLabel, drawScatter)
-watch(yAxisLabel, drawScatter)
 </script>
 
 <template>
@@ -146,6 +154,24 @@ watch(yAxisLabel, drawScatter)
     </label>
 
     <svg ref="svgRef" class="chart"></svg>
+
+    <div class="helper-panel">
+      <p>Each dot is a player.</p>
+      <p>Nearby dots have similar match patterns.</p>
+    </div>
+
+    <details class="advanced-panel">
+      <summary>How this chart is computed</summary>
+      <p>
+        The projection comes from the active run and is based on
+        {{ clusteringConfig.attributes.length }} selected attributes.
+      </p>
+      <ul>
+        <li v-for="component in projectionComponents" :key="component.index">
+          {{ component.label }}
+        </li>
+      </ul>
+    </details>
 
     <div class="summary-grid">
       <article v-for="s in summaries" :key="s.cluster" class="summary-card">
