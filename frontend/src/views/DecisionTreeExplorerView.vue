@@ -95,6 +95,54 @@ function treeData() {
     }
   }
 
+  if (Array.isArray(payload)) {
+    const nodesById = new Map()
+    for (const node of payload) {
+      const id = nodeId(node, nodesById.size)
+      const splitFeature =
+        node.split_feature ??
+        node.feature ??
+        node.feature_name ??
+        node.splitFeature ??
+        node.split_feature_name ??
+        node.splitFeatureName ??
+        null
+      const threshold = asNumber(node.threshold ?? node.split_threshold ?? node.splitThreshold)
+      const leftId = node.left_child_id ?? node.left_child ?? node.left ?? node.leftChild ?? null
+      const rightId = node.right_child_id ?? node.right_child ?? node.right ?? node.rightChild ?? null
+      const leafMetadata = node.leaf_metadata ?? node.leaf ?? node.leaf_info ?? node.leafInfo ?? null
+      const isLeaf =
+        Boolean(node.is_leaf) ||
+        (Number(leftId) < 0 && Number(rightId) < 0) ||
+        (!Number.isFinite(Number(leftId)) && !Number.isFinite(Number(rightId)))
+
+      nodesById.set(String(id), {
+        id: String(id),
+        splitFeature,
+        threshold,
+        leafMetadata,
+        isLeaf,
+        leftId: Number.isFinite(Number(leftId)) && Number(leftId) >= 0 ? String(leftId) : null,
+        rightId: Number.isFinite(Number(rightId)) && Number(rightId) >= 0 ? String(rightId) : null,
+        children: []
+      })
+    }
+
+    for (const node of nodesById.values()) {
+      const children = [node.leftId, node.rightId]
+        .filter(Boolean)
+        .map((childId) => nodesById.get(childId))
+        .filter(Boolean)
+      node.children = children
+      if (children.length > 0) node.isLeaf = false
+      node.name = node.isLeaf
+        ? `Leaf ${node.leafMetadata?.leaf_id ?? node.leafMetadata?.leafId ?? node.id}`
+        : `${node.splitFeature ?? 'feature'} <= ${(node.threshold ?? 0).toFixed(3)}`
+    }
+
+    return nodesById.get('0') ?? nodesById.values().next().value ?? null
+  }
+
   return buildNode(payload)
 }
 
