@@ -1,10 +1,12 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { apiGet, apiPost } from '../services/api'
 
 const props = defineProps({
   clusterResult: { type: Object, required: true },
-  players: { type: Array, required: true }
+  players: { type: Array, required: true },
+  clusteringConfig: { type: Object, required: true },
+  projectionMetadata: { type: Object, required: true }
 })
 
 const nameQuery = ref('')
@@ -21,6 +23,18 @@ const queryTotal = ref(0)
 const queryError = ref('')
 
 const clusters = computed(() => [...new Set(props.players.map((p) => p.cluster_id))].sort((a, b) => a - b))
+
+watch(
+  () => props.clusterResult.cluster_request_id,
+  () => {
+    clusterFilter.value = 'all'
+    searchResults.value = []
+    queryRows.value = []
+    queryTotal.value = 0
+    searchError.value = ''
+    queryError.value = ''
+  }
+)
 
 async function runSearch() {
   searchError.value = ''
@@ -68,6 +82,9 @@ async function runFilterQuery() {
   <section class="panel split-two">
     <article class="panel nested">
       <h2>Player name search</h2>
+      <p class="subtle">
+        Run: {{ clusterResult.cluster_request_id }} · {{ clusteringConfig.algorithm }}
+      </p>
       <div class="filters">
         <label>
           Name contains
@@ -90,6 +107,9 @@ async function runFilterQuery() {
 
     <article class="panel nested">
       <h2>Attribute filters</h2>
+      <p class="subtle">
+        Projection axes: {{ projectionMetadata.xAttribute || 'N/A' }} / {{ projectionMetadata.yAttribute || 'N/A' }}
+      </p>
       <div class="filters">
         <label>
           Attribute
