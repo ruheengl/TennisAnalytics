@@ -32,12 +32,29 @@ DEFAULT_FEATURES = [
 
 class ClusterRequest(BaseModel):
     attributes: List[str] = Field(..., min_length=2)
+    algorithm: Literal["kmeans", "gmm", "dbscan", "hierarchical"] = "kmeans"
+    params: Dict[str, Any] = Field(default_factory=dict)
     k: int = Field(6, ge=2, le=30)
     distance_metric: Literal["euclidean", "manhattan", "cosine"] = "euclidean"
     scaling: Literal["none", "zscore", "minmax"] = "zscore"
     max_iter: int = Field(40, ge=5, le=200)
     seed: int = 42
     filters: Dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_algorithm_params(self) -> "ClusterRequest":
+        if self.algorithm in {"kmeans", "gmm", "hierarchical"}:
+            raw_k = self.params.get("k", self.k)
+            if not isinstance(raw_k, int) or raw_k < 2 or raw_k > 30:
+                raise ValueError("params.k must be an integer in [2, 30]")
+        if self.algorithm == "dbscan":
+            eps = self.params.get("eps", 0.7)
+            min_samples = self.params.get("min_samples", 5)
+            if not isinstance(eps, (int, float)) or float(eps) <= 0:
+                raise ValueError("params.eps must be > 0 for dbscan")
+            if not isinstance(min_samples, int) or min_samples < 1:
+                raise ValueError("params.min_samples must be >= 1 for dbscan")
+        return self
 
 
 class ThresholdFilter(BaseModel):
@@ -89,7 +106,8 @@ class ClusterCacheEntry:
     feature_columns: List[str]
     player_ids: List[str]
     labels: np.ndarray
-    centroids: np.ndarray
+    algorithm: str
+    prototypes: Optional[np.ndarray]
     vectors: np.ndarray
     quality: Dict[str, Any]
     created_at: float
@@ -218,6 +236,8 @@ def _table_columns(conn: sqlite3.Connection) -> set[str]:
 def _normalize_payload(payload: ClusterRequest) -> Dict[str, Any]:
     return {
         "attributes": sorted(set(payload.attributes)),
+        "algorithm": payload.algorithm,
+        "params": payload.params,
         "k": int(payload.k),
         "distance_metric": payload.distance_metric,
         "scaling": payload.scaling,
@@ -340,6 +360,167 @@ def _cluster_quality(matrix: np.ndarray, labels: np.ndarray, centroids: np.ndarr
     }
 
 
+def _resolve_algorithm_params(req: Dict[str, Any]) -> Dict[str, Any]:
+    params = dict(req.get("params") or {})
+    params.setdefault("k", int(req["k"]))
+    params.setdefault("max_iter", int(req["max_iter"]))
+    params.setdefault("seed", int(req["seed"]))
+    params.setdefault("distance_metric", req["distance_metric"])
+    return params
+
+
+def _run_kmeans(matrix: np.ndarray, req: Dict[str, Any]) -> Dict[str, Any]:
+    params = _resolve_algorithm_params(req)
+    labels, centroids = _kmeans(
+        matrix, int(params["k"]), str(params["distance_metric"]), int(params["seed"]), int(params["max_iter"])
+    )
+    quality = _cluster_quality(matrix, labels, centroids, str(params["distance_metric"]))
+    quality["method_stats"] = {"algorithm": "kmeans", "k": int(params["k"])}
+    return {"labels": labels, "prototypes": centroids, "quality": quality}
+
+
+def _run_gmm(matrix: np.ndarray, req: Dict[str, Any]) -> Dict[str, Any]:
+    params = _resolve_algorithm_params(req)
+    k = int(params["k"])
+    max_iter = int(params["max_iter"])
+    seed = int(params["seed"])
+    n, d = matrix.shape
+    km_labels, km_centroids = _kmeans(matrix, k, str(params["distance_metric"]), seed, max_iter=max(10, min(max_iter, 30)))
+    means = km_centroids.copy()
+    variances = np.ones((k, d), dtype=np.float64)
+    weights = np.ones(k, dtype=np.float64) / k
+    eye = 1e-6
+
+    for _ in range(max_iter):
+        log_probs = np.zeros((n, k), dtype=np.float64)
+        for j in range(k):
+            diff = matrix - means[j]
+            var = np.maximum(variances[j], eye)
+            log_det = float(np.sum(np.log(var)))
+            quad = np.sum((diff * diff) / var, axis=1)
+            log_probs[:, j] = -0.5 * (d * np.log(2.0 * np.pi) + log_det + quad) + np.log(max(weights[j], eye))
+        max_log = np.max(log_probs, axis=1, keepdims=True)
+        probs = np.exp(log_probs - max_log)
+        responsibilities = probs / np.maximum(np.sum(probs, axis=1, keepdims=True), eye)
+        nk = np.sum(responsibilities, axis=0)
+        weights = nk / n
+        means = (responsibilities.T @ matrix) / np.maximum(nk[:, None], eye)
+        for j in range(k):
+            diff = matrix - means[j]
+            variances[j] = np.sum(responsibilities[:, [j]] * (diff * diff), axis=0) / max(nk[j], eye)
+
+    labels = np.argmax(responsibilities, axis=1).astype(int)
+    confidence = responsibilities[np.arange(n), labels]
+    quality = _cluster_quality(matrix, labels, means, str(params["distance_metric"]))
+    quality["confidence_by_player"] = confidence
+    quality["method_stats"] = {
+        "algorithm": "gmm",
+        "k": k,
+        "avg_assignment_probability": float(np.mean(confidence)),
+    }
+    return {"labels": labels, "prototypes": means, "quality": quality}
+
+
+def _run_dbscan(matrix: np.ndarray, req: Dict[str, Any]) -> Dict[str, Any]:
+    params = _resolve_algorithm_params(req)
+    eps = float(params.get("eps", 0.7))
+    min_samples = int(params.get("min_samples", 5))
+    metric = str(params["distance_metric"])
+    n = matrix.shape[0]
+    labels = np.full(n, -1, dtype=int)
+    visited = np.zeros(n, dtype=bool)
+    cluster_id = 0
+
+    def neighborhood(i: int) -> np.ndarray:
+        d = _distance(matrix, matrix[i], metric)
+        return np.where(d <= eps)[0]
+
+    for i in range(n):
+        if visited[i]:
+            continue
+        visited[i] = True
+        neighbors = neighborhood(i)
+        if len(neighbors) < min_samples:
+            labels[i] = -1
+            continue
+        labels[i] = cluster_id
+        seeds = list(neighbors.tolist())
+        idx = 0
+        while idx < len(seeds):
+            j = seeds[idx]
+            if not visited[j]:
+                visited[j] = True
+                nbs = neighborhood(j)
+                if len(nbs) >= min_samples:
+                    for c in nbs.tolist():
+                        if c not in seeds:
+                            seeds.append(c)
+            if labels[j] == -1:
+                labels[j] = cluster_id
+            if labels[j] < 0:
+                labels[j] = cluster_id
+            idx += 1
+        cluster_id += 1
+
+    non_noise = sorted(int(v) for v in np.unique(labels) if v >= 0)
+    remap = {old: new for new, old in enumerate(non_noise)}
+    labels = np.asarray([remap.get(int(v), -1) for v in labels], dtype=int)
+    k = len(non_noise)
+    if k > 0:
+        centroids = np.vstack([np.mean(matrix[labels == idx], axis=0) for idx in range(k)])
+        quality = _cluster_quality(matrix[labels >= 0], labels[labels >= 0], centroids, metric)
+        full_conf = np.zeros(n, dtype=np.float64)
+        full_conf[labels >= 0] = quality["confidence_by_player"]
+    else:
+        centroids = None
+        quality = {"inertia": None, "mean_confidence": 0.0, "clusters": [], "confidence_by_player": np.zeros(n)}
+        full_conf = quality["confidence_by_player"]
+    quality["confidence_by_player"] = full_conf
+    quality["method_stats"] = {
+        "algorithm": "dbscan",
+        "eps": eps,
+        "min_samples": min_samples,
+        "noise_count": int(np.sum(labels < 0)),
+        "cluster_count": k,
+    }
+    return {"labels": labels, "prototypes": centroids, "quality": quality}
+
+
+def _run_hierarchical(matrix: np.ndarray, req: Dict[str, Any]) -> Dict[str, Any]:
+    params = _resolve_algorithm_params(req)
+    target_k = int(params["k"])
+    n = matrix.shape[0]
+    if n < target_k:
+        raise HTTPException(status_code=400, detail=f"k={target_k} cannot exceed player count={n}")
+    clusters: Dict[int, List[int]] = {i: [i] for i in range(n)}
+    next_id = n
+    while len(clusters) > target_k:
+        keys = list(clusters)
+        best_pair: Optional[Tuple[int, int]] = None
+        best_dist = float("inf")
+        for i in range(len(keys)):
+            for j in range(i + 1, len(keys)):
+                ai = np.mean(matrix[clusters[keys[i]]], axis=0)
+                bj = np.mean(matrix[clusters[keys[j]]], axis=0)
+                dist = float(np.linalg.norm(ai - bj))
+                if dist < best_dist:
+                    best_dist = dist
+                    best_pair = (keys[i], keys[j])
+        assert best_pair is not None
+        a, b = best_pair
+        clusters[next_id] = clusters[a] + clusters[b]
+        del clusters[a]
+        del clusters[b]
+        next_id += 1
+    labels = np.zeros(n, dtype=int)
+    for cid, members in enumerate(clusters.values()):
+        labels[members] = cid
+    centroids = np.vstack([np.mean(matrix[labels == idx], axis=0) for idx in range(target_k)])
+    quality = _cluster_quality(matrix, labels, centroids, str(params["distance_metric"]))
+    quality["method_stats"] = {"algorithm": "hierarchical", "k": target_k, "linkage": "average"}
+    return {"labels": labels, "prototypes": centroids, "quality": quality}
+
+
 def _rows_to_matrix(rows: List[sqlite3.Row], columns: List[str]) -> Tuple[List[str], np.ndarray]:
     player_ids: List[str] = []
     vectors: List[List[float]] = []
@@ -418,14 +599,20 @@ def _load_cluster(req: ClusterRequest) -> ClusterCacheEntry:
 
     player_ids, matrix = _rows_to_matrix(rows, normalized["attributes"])
     scaled = _scale_matrix(matrix, normalized["scaling"])
-    labels, centroids = _kmeans(
-        scaled,
-        normalized["k"],
-        normalized["distance_metric"],
-        normalized["seed"],
-        normalized["max_iter"],
-    )
-    quality = _cluster_quality(scaled, labels, centroids, normalized["distance_metric"])
+    algorithm = normalized["algorithm"]
+    runners = {
+        "kmeans": _run_kmeans,
+        "gmm": _run_gmm,
+        "dbscan": _run_dbscan,
+        "hierarchical": _run_hierarchical,
+    }
+    runner = runners.get(algorithm)
+    if runner is None:
+        raise HTTPException(status_code=400, detail=f"Unsupported algorithm: {algorithm}")
+    result = runner(scaled, normalized)
+    labels = result["labels"]
+    prototypes = result["prototypes"]
+    quality = result["quality"]
 
     entry = ClusterCacheEntry(
         request_id=request_id,
@@ -433,7 +620,8 @@ def _load_cluster(req: ClusterRequest) -> ClusterCacheEntry:
         feature_columns=normalized["attributes"],
         player_ids=player_ids,
         labels=labels,
-        centroids=centroids,
+        algorithm=algorithm,
+        prototypes=prototypes,
         vectors=scaled,
         quality=quality,
         created_at=time(),
@@ -478,23 +666,36 @@ def create_cluster(req: ClusterRequest) -> Dict[str, Any]:
     for pid, label in zip(entry.player_ids, entry.labels.tolist()):
         cluster_members.setdefault(int(label), []).append(pid)
 
-    centroids = []
-    for idx, centroid in enumerate(entry.centroids):
-        centroid_stats = {name: float(value) for name, value in zip(entry.feature_columns, centroid.tolist())}
-        centroids.append(
-            {
-                "cluster_id": idx,
-                "centroid": centroid_stats,
-                "size": len(cluster_members.get(idx, [])),
-                "player_labels": cluster_members.get(idx, [])[:100],
-            }
-        )
+    centroid_rows = []
+    unique_labels = sorted(set(int(v) for v in entry.labels.tolist() if int(v) >= 0))
+    if entry.prototypes is not None:
+        for idx, centroid in enumerate(entry.prototypes):
+            centroid_stats = {name: float(value) for name, value in zip(entry.feature_columns, centroid.tolist())}
+            centroid_rows.append(
+                {
+                    "cluster_id": idx,
+                    "centroid": centroid_stats,
+                    "size": len(cluster_members.get(idx, [])),
+                    "player_labels": cluster_members.get(idx, [])[:100],
+                }
+            )
+    else:
+        for idx in unique_labels:
+            centroid_rows.append(
+                {
+                    "cluster_id": idx,
+                    "centroid": None,
+                    "size": len(cluster_members.get(idx, [])),
+                    "player_labels": cluster_members.get(idx, [])[:100],
+                }
+            )
 
     return {
         "cluster_request_id": entry.request_id,
         "cached": True,
         "player_count": len(entry.player_ids),
         "attributes": entry.feature_columns,
+        "algorithm": entry.algorithm,
         "distance_metric": entry.normalized_payload["distance_metric"],
         "scaling": entry.normalized_payload["scaling"],
         "metadata": {
@@ -502,8 +703,9 @@ def create_cluster(req: ClusterRequest) -> Dict[str, Any]:
                 "inertia": entry.quality["inertia"],
                 "mean_confidence": entry.quality["mean_confidence"],
                 "clusters": entry.quality["clusters"],
+                "method_stats": entry.quality.get("method_stats", {}),
             },
-            "centroids": centroids,
+            "centroids": centroid_rows,
             "confidence_sample": [
                 {
                     "player_id": pid,
