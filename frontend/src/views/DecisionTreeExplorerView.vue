@@ -11,7 +11,7 @@ const props = defineProps({
 const selectedPlayer = ref('')
 const treeSvg = ref()
 const barSvg = ref()
-const collapsed = ref(new Set(['root']))
+const collapsed = ref(new Set())
 const explanation = ref(null)
 const error = ref('')
 
@@ -42,7 +42,7 @@ async function loadPrediction() {
 
     const resp = await apiPost('/predict', { features, top_k_features: 8 })
     explanation.value = resp.explanation
-    collapsed.value = new Set(['root'])
+    collapsed.value = new Set()
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   }
@@ -70,50 +70,46 @@ function drawTree() {
   svg.selectAll('*').remove()
   if (!explanation.value) return
 
-  const width = 900
-  const height = 320
-  svg.attr('viewBox', `0 0 ${width} ${height}`)
-
   const fullRoot = d3.hierarchy(treeData())
+  d3.tree().nodeSize([180, 70])(fullRoot)
+
   const hiddenIds = collapsed.value
-
-  const visibleNodes = fullRoot.descendants().filter((node) => {
-    return !node.ancestors().slice(0, -1).some((ancestor) => hiddenIds.has(ancestor.data.id))
-  })
-  const visibleIds = new Set(visibleNodes.map((n) => n.data.id))
-
+  const visibleNodes = fullRoot.descendants().filter(
+    (node) => !node.ancestors().slice(0, -1).some((ancestor) => hiddenIds.has(ancestor.data.id))
+  )
+  const visibleIds = new Set(visibleNodes.map((node) => node.data.id))
   const links = fullRoot
     .links()
     .filter((link) => visibleIds.has(link.source.data.id) && visibleIds.has(link.target.data.id))
 
-  const layoutRoot = d3.hierarchy(treeData())
-  d3.tree().size([height - 40, width - 120])(layoutRoot)
-  const pos = new Map(layoutRoot.descendants().map((n) => [n.data.id, { x: n.x, y: n.y }]))
+  const minX = d3.min(visibleNodes, (node) => node.x) ?? 0
+  const maxX = d3.max(visibleNodes, (node) => node.x) ?? 0
+  const maxY = d3.max(visibleNodes, (node) => node.y) ?? 0
+  const width = Math.max(900, maxX - minX + 180)
+  const height = Math.max(320, maxY + 120)
+  const offsetX = 90 - minX
+  const offsetY = 30
 
-  svg
+  svg.attr('viewBox', `0 0 ${width} ${height}`)
+
+  const graph = svg.append('g').attr('transform', `translate(${offsetX},${offsetY})`)
+
+  graph
     .append('g')
-    .attr('transform', 'translate(60,20)')
     .selectAll('path')
     .data(links)
     .join('path')
     .attr('fill', 'none')
     .attr('stroke', '#94a3b8')
-    .attr('d', (d) => {
-      const s = pos.get(d.source.data.id)
-      const t = pos.get(d.target.data.id)
-      return d3.linkHorizontal()({ source: [s.y, s.x], target: [t.y, t.x] })
-    })
+    .attr('stroke-width', 1.5)
+    .attr('d', (d) => d3.linkVertical()({ source: [d.source.x, d.source.y], target: [d.target.x, d.target.y] }))
 
-  const nodes = svg
+  const nodes = graph
     .append('g')
-    .attr('transform', 'translate(60,20)')
     .selectAll('g')
     .data(visibleNodes)
     .join('g')
-    .attr('transform', (d) => {
-      const p = pos.get(d.data.id)
-      return `translate(${p.y},${p.x})`
-    })
+    .attr('transform', (d) => `translate(${d.x},${d.y})`)
     .style('cursor', 'pointer')
     .on('click', (_, d) => {
       const next = new Set(collapsed.value)
