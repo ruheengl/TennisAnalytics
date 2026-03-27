@@ -30,7 +30,7 @@ const summaries = computed(() => {
       count: rows.length,
       avgElo: d3.mean(rows, (r) => Number(r.elo_pre ?? 0)) ?? 0,
       avgWinPct: (d3.mean(rows, (r) => Number(r.career_win_pct ?? 0)) ?? 0) * 100,
-      avgService: (d3.mean(rows, (r) => Number(r.service_points_won_pct ?? 0)) ?? 0) * 100
+      avgService: d3.mean(rows, (r) => Number(r.service_points_won_pct ?? 0)) ?? 0
     }),
     (r) => r.cluster_id
   )
