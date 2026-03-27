@@ -38,8 +38,21 @@ const summaries = computed(() => {
   return grouped.map(([cluster, values]) => ({ cluster, ...values }))
 })
 
-const xAxisLabel = computed(() => props.projectionMetadata.xAttribute || 'service_points_won_pct')
-const yAxisLabel = computed(() => props.projectionMetadata.yAttribute || 'return_points_won_pct')
+function formatLoading(item) {
+  const sign = item.loading >= 0 ? '+' : '-'
+  return `${sign}${item.attribute}`
+}
+
+function componentLabel(componentIndex) {
+  const ratio = Number(props.projectionMetadata.explainedVarianceRatio?.[componentIndex] ?? 0) * 100
+  const varianceText = `${ratio.toFixed(1)}% variance`
+  const loadings = props.projectionMetadata.topLoadings?.[componentIndex] ?? []
+  const loadingText = loadings.length ? loadings.map(formatLoading).join(', ') : 'insufficient variance'
+  return `PC${componentIndex + 1} (${varianceText}): ${loadingText}`
+}
+
+const xAxisLabel = computed(() => componentLabel(0))
+const yAxisLabel = computed(() => componentLabel(1))
 
 watch(
   () => props.clusterResult.cluster_request_id,
@@ -59,13 +72,13 @@ function drawScatter() {
 
   const x = d3
     .scaleLinear()
-    .domain(d3.extent(filtered.value, (d) => Number(d.service_points_won_pct ?? 0)))
+    .domain(d3.extent(filtered.value, (d) => Number(d.pc1 ?? 0)))
     .nice()
     .range([margin.left, width - margin.right])
 
   const y = d3
     .scaleLinear()
-    .domain(d3.extent(filtered.value, (d) => Number(d.return_points_won_pct ?? 0)))
+    .domain(d3.extent(filtered.value, (d) => Number(d.pc2 ?? 0)))
     .nice()
     .range([height - margin.bottom, margin.top])
 
@@ -74,20 +87,20 @@ function drawScatter() {
   svg
     .append('g')
     .attr('transform', `translate(0,${height - margin.bottom})`)
-    .call(d3.axisBottom(x).ticks(8).tickFormat((d) => `${Math.round(d * 100)}%`))
+    .call(d3.axisBottom(x).ticks(8))
 
   svg
     .append('g')
     .attr('transform', `translate(${margin.left},0)`)
-    .call(d3.axisLeft(y).ticks(7).tickFormat((d) => `${Math.round(d * 100)}%`))
+    .call(d3.axisLeft(y).ticks(7))
 
   svg
     .append('g')
     .selectAll('circle')
     .data(filtered.value)
     .join('circle')
-    .attr('cx', (d) => x(Number(d.service_points_won_pct ?? 0)))
-    .attr('cy', (d) => y(Number(d.return_points_won_pct ?? 0)))
+    .attr('cx', (d) => x(Number(d.pc1 ?? 0)))
+    .attr('cy', (d) => y(Number(d.pc2 ?? 0)))
     .attr('r', 4)
     .attr('fill', (d) => color(d.cluster_id))
     .attr('opacity', 0.8)
@@ -99,7 +112,7 @@ function drawScatter() {
     .attr('x', width / 2)
     .attr('y', height - 10)
     .attr('text-anchor', 'middle')
-    .text(`${xAxisLabel.value} (projection X)`)
+    .text(xAxisLabel.value)
 
   svg
     .append('text')
@@ -107,7 +120,7 @@ function drawScatter() {
     .attr('y', 18)
     .attr('transform', 'rotate(-90)')
     .attr('text-anchor', 'middle')
-    .text(`${yAxisLabel.value} (projection Y)`)
+    .text(yAxisLabel.value)
 }
 
 onMounted(drawScatter)
