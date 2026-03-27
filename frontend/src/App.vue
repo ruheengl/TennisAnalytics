@@ -26,6 +26,10 @@ const playerRows = ref([])
 const clusterByPlayer = ref({})
 
 const selectedAttributes = ref([])
+const configMode = ref('simple')
+const simplePreset = ref('balanced')
+const simpleGroupCount = ref(6)
+const showAdvancedOptions = ref(false)
 const algorithm = ref('kmeans')
 const k = ref(6)
 const maxIter = ref(50)
@@ -37,6 +41,39 @@ const distanceMetric = ref('euclidean')
 const scaling = ref('zscore')
 const MAX_CLUSTER_PLAYERS_PAGE_SIZE = 500
 const MAX_PLAYER_QUERY_LIMIT = 2000
+
+const simplePresetOptions = {
+  balanced: {
+    label: 'Balanced',
+    algorithm: 'kmeans',
+    distanceMetric: 'euclidean',
+    scaling: 'zscore',
+    params: {
+      maxIter: 75,
+      seed: 42
+    }
+  },
+  detailed: {
+    label: 'Detailed',
+    algorithm: 'gmm',
+    distanceMetric: 'cosine',
+    scaling: 'zscore',
+    params: {
+      maxIter: 150,
+      seed: 42
+    }
+  },
+  fast: {
+    label: 'Fast',
+    algorithm: 'kmeans',
+    distanceMetric: 'manhattan',
+    scaling: 'minmax',
+    params: {
+      maxIter: 30,
+      seed: 42
+    }
+  }
+}
 
 const availableAttributes = computed(() => health.value?.default_attributes ?? [])
 
@@ -108,6 +145,23 @@ watch(
     if (!selectedAttributes.value.length) {
       selectedAttributes.value = [...attrs]
     }
+  },
+  { immediate: true }
+)
+
+watch(
+  [configMode, simplePreset, simpleGroupCount],
+  () => {
+    if (configMode.value !== 'simple') return
+
+    const preset = simplePresetOptions[simplePreset.value] ?? simplePresetOptions.balanced
+
+    algorithm.value = preset.algorithm
+    distanceMetric.value = preset.distanceMetric
+    scaling.value = preset.scaling
+    k.value = Number(simpleGroupCount.value)
+    maxIter.value = Number(preset.params.maxIter)
+    seed.value = Number(preset.params.seed)
   },
   { immediate: true }
 )
@@ -227,6 +281,28 @@ async function runClustering() {
 
     <section class="panel">
       <h2>Clustering configuration</h2>
+      <div class="mode-toggle">
+        <span class="subtle">Mode</span>
+        <div class="mode-toggle-buttons">
+          <button
+            type="button"
+            class="secondary"
+            :class="{ active: configMode === 'simple' }"
+            @click="configMode = 'simple'"
+          >
+            Simple
+          </button>
+          <button
+            type="button"
+            class="secondary"
+            :class="{ active: configMode === 'advanced' }"
+            @click="configMode = 'advanced'"
+          >
+            Advanced
+          </button>
+        </div>
+      </div>
+
       <div class="filters">
         <label>
           Attributes
@@ -237,72 +313,96 @@ async function runClustering() {
           </select>
         </label>
 
-        <label>
-          Algorithm
-          <select v-model="algorithm">
-            <option value="kmeans">kmeans</option>
-            <option value="gmm">gmm</option>
-            <option value="dbscan">dbscan</option>
-            <option value="hierarchical">hierarchical</option>
-          </select>
-        </label>
-
-        <label>
-          Distance metric
-          <select v-model="distanceMetric">
-            <option value="euclidean">euclidean</option>
-            <option value="manhattan">manhattan</option>
-            <option value="cosine">cosine</option>
-          </select>
-        </label>
-
-        <label>
-          Scaling
-          <select v-model="scaling">
-            <option value="none">none</option>
-            <option value="zscore">zscore</option>
-            <option value="minmax">minmax</option>
-          </select>
-        </label>
-
-        <label v-if="algorithm !== 'dbscan'">
-          k
-          <input v-model.number="k" type="number" min="2" max="30" step="1" />
-        </label>
-
-        <template v-if="algorithm === 'kmeans' || algorithm === 'gmm'">
+        <template v-if="configMode === 'simple'">
           <label>
-            max_iter
-            <input v-model.number="maxIter" type="number" min="1" step="1" />
+            How many player groups?
+            <input v-model.number="simpleGroupCount" type="number" min="2" max="30" step="1" />
           </label>
+
           <label>
-            seed
-            <input v-model.number="seed" type="number" step="1" />
+            Grouping style
+            <select v-model="simplePreset">
+              <option value="balanced">{{ simplePresetOptions.balanced.label }}</option>
+              <option value="detailed">{{ simplePresetOptions.detailed.label }}</option>
+              <option value="fast">{{ simplePresetOptions.fast.label }}</option>
+            </select>
           </label>
         </template>
 
-        <template v-else-if="algorithm === 'dbscan'">
-          <label>
-            eps
-            <input v-model.number="eps" type="number" min="0.0001" step="0.01" />
-          </label>
-          <label>
-            min_samples
-            <input v-model.number="minSamples" type="number" min="1" step="1" />
-          </label>
-        </template>
+        <template v-else>
+          <button type="button" class="secondary" @click="showAdvancedOptions = !showAdvancedOptions">
+            {{ showAdvancedOptions ? 'Hide advanced settings' : 'Show advanced settings' }}
+          </button>
 
-        <label v-else-if="algorithm === 'hierarchical'">
-          linkage
-          <select v-model="linkage">
-            <option value="average">average</option>
-            <option value="complete">complete</option>
-            <option value="single">single</option>
-          </select>
-        </label>
+          <div v-if="showAdvancedOptions" class="filters advanced-fields">
+            <label>
+              Algorithm
+              <select v-model="algorithm">
+                <option value="kmeans">kmeans</option>
+                <option value="gmm">gmm</option>
+                <option value="dbscan">dbscan</option>
+                <option value="hierarchical">hierarchical</option>
+              </select>
+            </label>
+
+            <label>
+              Distance metric
+              <select v-model="distanceMetric">
+                <option value="euclidean">euclidean</option>
+                <option value="manhattan">manhattan</option>
+                <option value="cosine">cosine</option>
+              </select>
+            </label>
+
+            <label>
+              Scaling
+              <select v-model="scaling">
+                <option value="none">none</option>
+                <option value="zscore">zscore</option>
+                <option value="minmax">minmax</option>
+              </select>
+            </label>
+
+            <label v-if="algorithm !== 'dbscan'">
+              k
+              <input v-model.number="k" type="number" min="2" max="30" step="1" />
+            </label>
+
+            <template v-if="algorithm === 'kmeans' || algorithm === 'gmm'">
+              <label>
+                max_iter
+                <input v-model.number="maxIter" type="number" min="1" step="1" />
+              </label>
+              <label>
+                seed
+                <input v-model.number="seed" type="number" step="1" />
+              </label>
+            </template>
+
+            <template v-else-if="algorithm === 'dbscan'">
+              <label>
+                eps
+                <input v-model.number="eps" type="number" min="0.0001" step="0.01" />
+              </label>
+              <label>
+                min_samples
+                <input v-model.number="minSamples" type="number" min="1" step="1" />
+              </label>
+            </template>
+
+            <label v-else-if="algorithm === 'hierarchical'">
+              linkage
+              <select v-model="linkage">
+                <option value="average">average</option>
+                <option value="complete">complete</option>
+                <option value="single">single</option>
+              </select>
+            </label>
+          </div>
+        </template>
       </div>
 
-      <button @click="runClustering" :disabled="loading || !canRunClustering">Run clustering</button>
+      <button @click="runClustering" :disabled="loading || !canRunClustering">Generate player groups</button>
       <p class="subtle" v-if="clusterResult">
         Active cluster request: <strong>{{ clusterResult.cluster_request_id }}</strong>
       </p>
