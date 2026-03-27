@@ -35,6 +35,8 @@ const minSamples = ref(5)
 const linkage = ref('average')
 const distanceMetric = ref('euclidean')
 const scaling = ref('zscore')
+const MAX_CLUSTER_PLAYERS_PAGE_SIZE = 500
+const MAX_PLAYER_QUERY_LIMIT = 2000
 
 const availableAttributes = computed(() => health.value?.default_attributes ?? [])
 
@@ -148,6 +150,29 @@ async function loadInitialState() {
   }
 }
 
+async function fetchClusterPlayers(clusterRequestId) {
+  const firstPage = await apiGet(`/clusters/${clusterRequestId}/players`, {
+    page: 1,
+    page_size: MAX_CLUSTER_PLAYERS_PAGE_SIZE
+  })
+  const totalPages = Math.max(1, Math.ceil(firstPage.total / MAX_CLUSTER_PLAYERS_PAGE_SIZE))
+
+  if (totalPages === 1) {
+    return firstPage.players
+  }
+
+  const remainingPages = await Promise.all(
+    Array.from({ length: totalPages - 1 }, (_, index) =>
+      apiGet(`/clusters/${clusterRequestId}/players`, {
+        page: index + 2,
+        page_size: MAX_CLUSTER_PLAYERS_PAGE_SIZE
+      })
+    )
+  )
+
+  return [firstPage.players, ...remainingPages.map((page) => page.players)].flat()
+}
+
 async function runClustering() {
   if (!canRunClustering.value) return
 
@@ -168,13 +193,10 @@ async function runClustering() {
     const clusterRequestId = clusterResult.value.cluster_request_id
 
     const [clusterPlayersResp, playersResp] = await Promise.all([
-      apiGet(`/clusters/${clusterRequestId}/players`, {
-        page: 1,
-        page_size: 2500
-      }),
+      fetchClusterPlayers(clusterRequestId),
       apiPost('/players/query', {
         filters: [],
-        limit: 2500,
+        limit: MAX_PLAYER_QUERY_LIMIT,
         offset: 0,
         sort_by: 'career_win_pct',
         sort_order: 'desc',
@@ -182,8 +204,8 @@ async function runClustering() {
       })
     ])
 
-    clusterPlayers.value = clusterPlayersResp.players
-    clusterByPlayer.value = Object.fromEntries(clusterPlayersResp.players.map((p) => [p.player_id, p.cluster_id]))
+    clusterPlayers.value = clusterPlayersResp
+    clusterByPlayer.value = Object.fromEntries(clusterPlayersResp.map((p) => [p.player_id, p.cluster_id]))
     playerRows.value = playersResp.players
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
