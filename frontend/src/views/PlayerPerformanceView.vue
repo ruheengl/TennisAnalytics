@@ -12,11 +12,16 @@ const error = ref('')
 const dataset = ref([])
 const domain = ref(null)
 
-const playerOptions = computed(() => props.players.map((p) => p.player_id))
+const playerOptions = computed(() =>
+  props.players.map((p) => ({
+    player_id: p.player_id,
+    player_name: p.player_name ?? p.player_id
+  }))
+)
 
 onMounted(() => {
   if (!selectedPlayer.value && playerOptions.value.length > 0) {
-    selectedPlayer.value = playerOptions.value[0]
+    selectedPlayer.value = playerOptions.value[0].player_id
   }
 })
 
@@ -149,7 +154,9 @@ function drawBrush() {
       <label>
         Player
         <select v-model="selectedPlayer">
-          <option v-for="id in playerOptions" :key="id" :value="id">{{ id }}</option>
+          <option v-for="player in playerOptions" :key="player.player_id" :value="player.player_id">
+            {{ player.player_name }}
+          </option>
         </select>
       </label>
     </div>

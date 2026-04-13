@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import csv
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 import numpy as np
@@ -15,6 +18,35 @@ from api.state import cluster_cache
 from pipeline.trends import DegradationCriteria, TrendOptions, annotate_series, evaluate_degradation
 
 router = APIRouter()
+
+
+def _format_player_name(first_name: Optional[str], last_name: Optional[str], player_id: str) -> str:
+    first = (first_name or "").strip()
+    last = (last_name or "").strip()
+    full_name = " ".join(part for part in (first, last) if part)
+    return full_name if full_name else player_id
+
+
+@lru_cache(maxsize=1)
+def _player_name_lookup() -> Dict[str, str]:
+    lookup: Dict[str, str] = {}
+    files = sorted(Path("data/processed").glob("atp_*_clean.csv"))
+    for file_path in files:
+        with file_path.open() as fh:
+            reader = csv.DictReader(fh)
+            for row in reader:
+                for team_num in (1, 2):
+                    player_id = (row.get(f"PlayerTeam{team_num}.PlayerId") or "").strip()
+                    if not player_id:
+                        continue
+                    first_name = row.get(f"PlayerTeam{team_num}.PlayerFirstName")
+                    last_name = row.get(f"PlayerTeam{team_num}.PlayerLastName")
+                    lookup[player_id] = _format_player_name(first_name, last_name, player_id)
+    return lookup
+
+
+def _player_display_name(player_id: str) -> str:
+    return _player_name_lookup().get(player_id, player_id)
 
 
 @router.post("/cluster")
@@ -74,6 +106,7 @@ def create_cluster(req: ClusterRequest) -> Dict[str, Any]:
             "confidence_sample": [
                 {
                     "player_id": pid,
+                    "player_name": _player_display_name(pid),
                     "cluster_id": int(label),
                     "confidence": float(score),
                 }
@@ -84,6 +117,7 @@ def create_cluster(req: ClusterRequest) -> Dict[str, Any]:
             "points": [
                 {
                     "player_id": pid,
+                    "player_name": _player_display_name(pid),
                     "pc1": float(coords[0]),
                     "pc2": float(coords[1]),
                 }
@@ -108,6 +142,7 @@ def cluster_projection(cluster_request_id: str) -> Dict[str, Any]:
             "points": [
                 {
                     "player_id": pid,
+                    "player_name": _player_display_name(pid),
                     "pc1": float(coords[0]),
                     "pc2": float(coords[1]),
                 }
@@ -142,7 +177,14 @@ def cluster_players(
             continue
         if min_confidence is not None and c < min_confidence:
             continue
-        rows.append({"player_id": pid, "cluster_id": int(label), "confidence": c})
+        rows.append(
+            {
+                "player_id": pid,
+                "player_name": _player_display_name(pid),
+                "cluster_id": int(label),
+                "confidence": c,
+            }
+        )
 
     total = len(rows)
     start = (page - 1) * page_size
@@ -167,19 +209,11 @@ def search_players(
     cluster_id: Optional[int] = None,
     limit: int = Query(25, ge=1, le=200),
 ) -> Dict[str, Any]:
-    like = f"%{q.lower()}%"
-    with connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT DISTINCT player_id FROM player_features
-            WHERE LOWER(player_id) LIKE ?
-            ORDER BY player_id
-            LIMIT ?
-            """,
-            (like, limit * 10),
-        ).fetchall()
+    query_text = q.strip().lower()
+    if not query_text:
+        return {"query": q, "count": 0, "players": []}
 
-    player_ids = [r["player_id"] for r in rows]
+    player_ids = [pid for pid, name in _player_name_lookup().items() if query_text in name.lower()]
     if cluster_request_id:
         entry = cluster_cache.get(cluster_request_id)
         if not entry:
@@ -189,7 +223,9 @@ def search_players(
         if cluster_id is not None:
             player_ids = [pid for pid in player_ids if mapping[pid] == cluster_id]
 
-    return {"query": q, "count": min(len(player_ids), limit), "players": player_ids[:limit]}
+    player_ids = sorted(player_ids)[:limit]
+    players = [{"player_id": pid, "player_name": _player_display_name(pid)} for pid in player_ids]
+    return {"query": q, "count": len(players), "players": players}
 
 
 @router.post("/players/query")
@@ -257,11 +293,17 @@ def query_players(req: PlayerQueryRequest) -> Dict[str, Any]:
         count_sql = f"SELECT COUNT(*) AS n FROM player_features {where_clause}"
         total = int(conn.execute(count_sql, params).fetchone()["n"])
 
+    rows_with_names = []
+    for row in rows:
+        record = dict(row)
+        record["player_name"] = _player_display_name(str(record.get("player_id", "")))
+        rows_with_names.append(record)
+
     return {
         "total": total,
         "offset": req.offset,
         "limit": req.limit,
-        "players": [dict(row) for row in rows],
+        "players": rows_with_names,
     }
 
 

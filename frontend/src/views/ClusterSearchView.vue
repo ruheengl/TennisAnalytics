@@ -202,7 +202,7 @@ async function runFilterQuery() {
       <button @click="runSearch" :disabled="!nameQuery.trim()">Search</button>
       <p v-if="searchError" class="error-text">{{ searchError }}</p>
       <ul class="rank-list">
-        <li v-for="player in searchResults" :key="player">{{ player }}</li>
+        <li v-for="player in searchResults" :key="player.player_id">{{ player.player_name }}</li>
       </ul>
     </article>
 
@@ -260,7 +260,7 @@ async function runFilterQuery() {
       <p class="subtle">{{ queryTotal }} matching rows (showing first {{ queryRows.length }}).</p>
       <ul class="rank-list">
         <li v-for="row in queryRows" :key="row.player_id">
-          <span>{{ row.player_id }}</span>
+          <span>{{ row.player_name ?? row.player_id }}</span>
           <strong>{{ formatQueryValue(row) }}</strong>
         </li>
       </ul>

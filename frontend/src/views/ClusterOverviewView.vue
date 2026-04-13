@@ -115,7 +115,7 @@ function drawScatter() {
     .attr('fill', (d) => color(d.cluster_id))
     .attr('opacity', 0.8)
     .append('title')
-    .text((d) => `${d.player_id}\nCluster ${d.cluster_id}`)
+    .text((d) => `${d.player_name ?? d.player_id}\nCluster ${d.cluster_id}`)
 
   svg
     .append('text')

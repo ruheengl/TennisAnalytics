@@ -14,6 +14,8 @@ const selectedTrend = ref([])
 const svgRef = ref()
 
 const topCandidates = computed(() => props.players.slice(0, 40).map((p) => p.player_id))
+const playerNameById = computed(() => Object.fromEntries(props.players.map((p) => [p.player_id, p.player_name ?? p.player_id])))
+const displayPlayerName = (playerId) => playerNameById.value[playerId] ?? playerId
 
 onMounted(loadRanking)
 watch(metric, loadRanking)
@@ -112,7 +114,7 @@ function drawTrend() {
           :class="{ selected: row.playerId === selectedPlayer }"
           @click="selectedPlayer = row.playerId"
         >
-          <span>{{ row.playerId }} ({{ row.label }})</span>
+          <span>{{ displayPlayerName(row.playerId) }} ({{ row.label }})</span>
           <strong>{{ row.score.toFixed(3) }}</strong>
         </li>
       </ul>
@@ -120,7 +122,7 @@ function drawTrend() {
 
     <article class="panel nested">
       <h2>Linked trend chart</h2>
-      <p class="subtle">Selected: {{ selectedPlayer || '—' }}</p>
+      <p class="subtle">Selected: {{ selectedPlayer ? displayPlayerName(selectedPlayer) : '—' }}</p>
       <svg ref="svgRef" class="chart"></svg>
     </article>
   </section>

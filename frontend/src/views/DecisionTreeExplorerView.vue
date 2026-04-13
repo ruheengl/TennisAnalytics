@@ -16,7 +16,16 @@ const collapsed = ref(new Set())
 const explanation = ref(null)
 const error = ref('')
 
-const playerOptions = computed(() => [...new Set(props.players.map((p) => p.player_id))])
+const playerNameById = computed(() =>
+  Object.fromEntries(props.players.map((p) => [p.player_id, p.player_name ?? p.player_id]))
+)
+const displayPlayerName = (playerId) => playerNameById.value[playerId] ?? playerId
+const playerOptions = computed(() =>
+  [...new Set(props.players.map((p) => p.player_id))].map((playerId) => ({
+    player_id: playerId,
+    player_name: displayPlayerName(playerId)
+  }))
+)
 const matchKeyForRow = (row) => {
   if (row?.match_id != null && row.match_id !== '') return `match:${row.match_id}`
   return `composite:${row?.player_id ?? ''}|${row?.opponent_id ?? ''}|${row?.match_date ?? ''}`
@@ -25,7 +34,7 @@ const playerMatchRows = computed(() => props.players.filter((p) => p.player_id =
 const matchOptions = computed(() =>
   playerMatchRows.value.map((row) => ({
     key: matchKeyForRow(row),
-    label: `${row.match_date ?? '-'} · vs ${row.opponent_id ?? '-'} · ${row.surface ?? '-'} · match_id=${row.match_id ?? '-'}`
+    label: `${row.match_date ?? '-'} · vs ${displayPlayerName(row.opponent_id)} · ${row.surface ?? '-'} · match_id=${row.match_id ?? '-'}`
   }))
 )
 const selectedMatchRow = computed(() =>
@@ -35,7 +44,7 @@ const pathSummary = computed(() => explanation.value?.path_summary ?? null)
 
 onMounted(async () => {
   if (!selectedPlayer.value && playerOptions.value.length > 0) {
-    selectedPlayer.value = playerOptions.value[0]
+    selectedPlayer.value = playerOptions.value[0].player_id
   }
 })
 watch(selectedPlayer, () => {
@@ -316,7 +325,9 @@ function formatFixed(value, digits = 3) {
       <label>
         Player
         <select v-model="selectedPlayer">
-          <option v-for="id in playerOptions" :key="id" :value="id">{{ id }}</option>
+          <option v-for="player in playerOptions" :key="player.player_id" :value="player.player_id">
+            {{ player.player_name }}
+          </option>
         </select>
       </label>
       <label>
