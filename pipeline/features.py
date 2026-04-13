@@ -22,11 +22,11 @@ import hashlib
 import json
 import math
 import sqlite3
-from collections import defaultdict, deque
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Deque, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 try:
     import duckdb  # type: ignore
@@ -155,8 +155,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def file_fingerprint(path: Path) -> Dict[str, object]:
+def file_metadata(path: Path) -> Dict[str, object]:
     stat = path.stat()
+    return {
+        "size": stat.st_size,
+        "mtime": int(stat.st_mtime),
+    }
+
+
+def file_sha256(path: Path) -> str:
     hash_obj = hashlib.sha256()
     with path.open("rb") as fh:
         while True:
@@ -164,11 +171,13 @@ def file_fingerprint(path: Path) -> Dict[str, object]:
             if not chunk:
                 break
             hash_obj.update(chunk)
-    return {
-        "size": stat.st_size,
-        "mtime": int(stat.st_mtime),
-        "sha256": hash_obj.hexdigest(),
-    }
+    return hash_obj.hexdigest()
+
+
+def file_fingerprint(path: Path) -> Dict[str, object]:
+    payload = file_metadata(path)
+    payload["sha256"] = file_sha256(path)
+    return payload
 
 
 def load_state(path: Path) -> Dict[str, object]:
@@ -226,18 +235,39 @@ def iter_clean_files(input_dir: Path) -> List[Path]:
     return sorted(input_dir.glob("atp_*_clean.csv"))
 
 
-def changed_files(files: Sequence[Path], state: Dict[str, object]) -> List[Path]:
+def changed_files(
+    files: Sequence[Path], state: Dict[str, object]
+) -> Tuple[List[Path], Dict[str, Dict[str, object]]]:
     prior = state.get("file_fingerprints", {}) if isinstance(state, dict) else {}
     if not isinstance(prior, dict):
         prior = {}
 
     changed: List[Path] = []
+    fingerprints: Dict[str, Dict[str, object]] = {}
     for path in files:
-        current_fp = file_fingerprint(path)
-        previous = prior.get(str(path))
+        path_key = str(path)
+        current_meta = file_metadata(path)
+        previous = prior.get(path_key)
+        if (
+            isinstance(previous, dict)
+            and previous.get("size") == current_meta["size"]
+            and previous.get("mtime") == current_meta["mtime"]
+        ):
+            fingerprints[path_key] = {
+                "size": current_meta["size"],
+                "mtime": current_meta["mtime"],
+                "sha256": previous.get("sha256"),
+            }
+            continue
+        current_fp = {
+            "size": current_meta["size"],
+            "mtime": current_meta["mtime"],
+            "sha256": file_sha256(path),
+        }
+        fingerprints[path_key] = current_fp
         if previous != current_fp:
             changed.append(path)
-    return changed
+    return changed, fingerprints
 
 
 def collect_affected_players(files: Sequence[Path]) -> Set[str]:
@@ -360,7 +390,10 @@ def compute_features(
 ) -> List[Dict[str, object]]:
     player_elo: Dict[str, float] = defaultdict(lambda: 1500.0)
     player_state: Dict[str, PlayerHistoryState] = defaultdict(PlayerHistoryState)
-    player_history: Dict[str, Deque[HistoryEntry]] = defaultdict(deque)
+    player_history: Dict[str, List[HistoryEntry]] = defaultdict(list)
+    player_surface_history: Dict[str, Dict[str, List[HistoryEntry]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
 
     rows: List[Dict[str, object]] = []
 
@@ -419,12 +452,10 @@ def compute_features(
             (a, b_elo),
             (b, a_elo),
         ):
-            history_entries = list(player_history[obs.player_id])
-            surface_entries = [e for e in history_entries if e.surface == obs.surface]
-            opponent_history_entries = list(player_history[obs.opponent_id])
-            opponent_surface_entries = [
-                e for e in opponent_history_entries if e.surface == obs.surface
-            ]
+            history_entries = player_history[obs.player_id]
+            surface_entries = player_surface_history[obs.player_id][obs.surface]
+            opponent_history_entries = player_history[obs.opponent_id]
+            opponent_surface_entries = player_surface_history[obs.opponent_id][obs.surface]
             state = player_state[obs.player_id]
             opponent_state = player_state[obs.opponent_id]
 
@@ -478,16 +509,16 @@ def compute_features(
         for obs in (a, b):
             player_state[obs.player_id].matches_played += 1
             player_state[obs.player_id].wins += obs.is_winner
-            player_history[obs.player_id].append(
-                HistoryEntry(
-                    match_date=obs.match_date,
-                    surface=obs.surface,
-                    is_win=obs.is_winner,
-                    elo_pre=pre_elos[obs.player_id],
-                    service_points_won_pct=obs.service_points_won_pct,
-                    return_points_won_pct=obs.return_points_won_pct,
-                )
+            entry = HistoryEntry(
+                match_date=obs.match_date,
+                surface=obs.surface,
+                is_win=obs.is_winner,
+                elo_pre=pre_elos[obs.player_id],
+                service_points_won_pct=obs.service_points_won_pct,
+                return_points_won_pct=obs.return_points_won_pct,
             )
+            player_history[obs.player_id].append(entry)
+            player_surface_history[obs.player_id][obs.surface].append(entry)
 
     return rows
 
@@ -675,7 +706,7 @@ def main() -> int:
         raise SystemExit(f"No cleaned files found under {args.input_dir}")
 
     state = load_state(args.state_file)
-    changed = changed_files(files, state)
+    changed, fingerprints = changed_files(files, state)
 
     if not changed:
         print("No changed input files detected; feature artifacts are already up to date.")
@@ -696,7 +727,7 @@ def main() -> int:
 
     state_payload = {
         "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "file_fingerprints": {str(path): file_fingerprint(path) for path in files},
+        "file_fingerprints": fingerprints,
         "match_windows": list(args.match_windows),
         "day_windows": list(args.day_windows),
         "rows_last_refresh": len(rows),
