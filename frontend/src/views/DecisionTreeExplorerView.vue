@@ -29,7 +29,8 @@ const playerOptions = computed(() =>
   }))
 )
 const matchKeyForRow = (row) => {
-  if (row?.row_id != null && row.row_id !== '') return `row:${row.row_id}`
+  const hasRowId = row?.row_id !== null && row?.row_id !== undefined && row.row_id !== ''
+  if (hasRowId) return `row:${row.row_id}`
   if (row?.match_id != null && row.match_id !== '') return `match:${row.match_id}`
   return `composite:${row?.player_id ?? ''}|${row?.opponent_id ?? ''}|${row?.match_date ?? ''}`
 }
@@ -41,8 +42,13 @@ const matchOptions = computed(() =>
   }))
 )
 const selectedMatchRow = computed(() =>
-  props.players.find((row) => matchKeyForRow(row) === selectedMatchKey.value) ?? null
+  playerMatchRows.value.find((row) => matchKeyForRow(row) === selectedMatchKey.value) ?? null
 )
+const schemaGuardMessage = computed(() => {
+  if (!selectedMatchKey.value) return 'Select a match row to request a prediction.'
+  if (!selectedMatchRow.value) return 'The selected match row could not be resolved for the current player.'
+  return 'No row_id found for selected row.'
+})
 const pathSummary = computed(() => explanation.value?.path_summary ?? null)
 const contextPanel = computed(() => {
   const row = selectedMatchRow.value
