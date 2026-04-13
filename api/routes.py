@@ -20,6 +20,17 @@ from pipeline.trends import DegradationCriteria, TrendOptions, annotate_series, 
 router = APIRouter()
 
 
+def _predict_feature_columns() -> List[str]:
+    try:
+        predictor = load_predictor()
+    except HTTPException:
+        return []
+    feature_columns = predictor.get("feature_columns", [])
+    if not isinstance(feature_columns, list):
+        return []
+    return [str(col) for col in feature_columns]
+
+
 def _format_player_name(first_name: Optional[str], last_name: Optional[str], player_id: str) -> str:
     first = (first_name or "").strip()
     last = (last_name or "").strip()
@@ -485,4 +496,5 @@ def health() -> Dict[str, Any]:
         "model_artifact_exists": MODEL_ARTIFACT_PATH.exists(),
         "cache_size": len(cluster_cache),
         "default_attributes": DEFAULT_FEATURES,
+        "predict_feature_columns": _predict_feature_columns(),
     }

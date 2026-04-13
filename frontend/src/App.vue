@@ -76,6 +76,7 @@ const simplePresetOptions = {
 }
 
 const availableAttributes = computed(() => health.value?.default_attributes ?? [])
+const predictorFeatureColumns = computed(() => health.value?.predict_feature_columns ?? [])
 
 const projectionMetadata = computed(() => {
   const projection = clusterResult.value?.projection
@@ -454,7 +455,7 @@ async function runClustering() {
     <DecisionTreeExplorerView
       v-else
       :players="enrichedPlayers"
-      :feature-columns="health?.default_attributes ?? []"
+      :feature-columns="predictorFeatureColumns"
     />
   </main>
 </template>

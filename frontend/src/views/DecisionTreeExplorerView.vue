@@ -16,6 +16,8 @@ const collapsed = ref(new Set())
 const explanation = ref(null)
 const predictionResponse = ref(null)
 const error = ref('')
+const schemaGuardMessage = 'Predictor schema unavailable. Refresh health or ensure model artifact is loaded.'
+const canRequestPrediction = computed(() => Array.isArray(props.featureColumns) && props.featureColumns.length > 0)
 
 const playerNameById = computed(() =>
   Object.fromEntries(props.players.map((p) => [p.player_id, p.player_name ?? p.player_id]))
@@ -73,6 +75,15 @@ watch(selectedPlayer, () => {
   }
 })
 watch(selectedMatchKey, loadPrediction)
+watch(
+  canRequestPrediction,
+  (available) => {
+    if (available) return
+    predictionResponse.value = null
+    explanation.value = null
+  },
+  { immediate: true }
+)
 watch(explanation, () => {
   drawTree()
   drawBars()
@@ -80,6 +91,11 @@ watch(explanation, () => {
 watch(collapsed, drawTree, { deep: true })
 
 async function loadPrediction() {
+  if (!canRequestPrediction.value) {
+    error.value = schemaGuardMessage
+    return
+  }
+
   const row = selectedMatchRow.value
   if (!row) return
 
@@ -87,7 +103,9 @@ async function loadPrediction() {
   try {
     const features = {}
     for (const col of props.featureColumns) {
-      features[col] = row[col] == null ? null : Number(row[col])
+      const value = row[col]
+      const missing = value == null || value === '' || (typeof value === 'number' && Number.isNaN(value))
+      features[col] = missing ? null : Number(value)
     }
 
     const resp = await apiPost('/predict', { features, top_k_features: 8 })
@@ -359,6 +377,7 @@ function formatFixed(value, digits = 3) {
       </label>
     </div>
     <p>Choose a focal player, then choose a specific match row to explain.</p>
+    <p v-if="!canRequestPrediction" class="error-text">{{ schemaGuardMessage }}</p>
     <p v-if="error" class="error-text">{{ error }}</p>
     <div v-if="contextPanel" class="path-summary">
       <h3>Match prediction context</h3>
