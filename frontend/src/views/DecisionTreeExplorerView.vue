@@ -9,21 +9,42 @@ const props = defineProps({
 })
 
 const selectedPlayer = ref('')
+const selectedMatchKey = ref('')
 const treeSvg = ref()
 const barSvg = ref()
 const collapsed = ref(new Set())
 const explanation = ref(null)
 const error = ref('')
 
-const options = computed(() => props.players.map((p) => p.player_id))
+const playerOptions = computed(() => [...new Set(props.players.map((p) => p.player_id))])
+const matchKeyForRow = (row) => {
+  if (row?.match_id != null && row.match_id !== '') return `match:${row.match_id}`
+  return `composite:${row?.player_id ?? ''}|${row?.opponent_id ?? ''}|${row?.match_date ?? ''}`
+}
+const playerMatchRows = computed(() => props.players.filter((p) => p.player_id === selectedPlayer.value))
+const matchOptions = computed(() =>
+  playerMatchRows.value.map((row) => ({
+    key: matchKeyForRow(row),
+    label: `${row.match_date ?? '-'} · vs ${row.opponent_id ?? '-'} · ${row.surface ?? '-'} · match_id=${row.match_id ?? '-'}`
+  }))
+)
+const selectedMatchRow = computed(() =>
+  props.players.find((row) => matchKeyForRow(row) === selectedMatchKey.value) ?? null
+)
 const pathSummary = computed(() => explanation.value?.path_summary ?? null)
 
 onMounted(async () => {
-  if (!selectedPlayer.value && options.value.length > 0) {
-    selectedPlayer.value = options.value[0]
+  if (!selectedPlayer.value && playerOptions.value.length > 0) {
+    selectedPlayer.value = playerOptions.value[0]
   }
 })
-watch(selectedPlayer, loadPrediction)
+watch(selectedPlayer, () => {
+  const firstMatchKey = playerMatchRows.value[0] ? matchKeyForRow(playerMatchRows.value[0]) : ''
+  if (selectedMatchKey.value !== firstMatchKey) {
+    selectedMatchKey.value = firstMatchKey
+  }
+})
+watch(selectedMatchKey, loadPrediction)
 watch(explanation, () => {
   drawTree()
   drawBars()
@@ -31,7 +52,7 @@ watch(explanation, () => {
 watch(collapsed, drawTree, { deep: true })
 
 async function loadPrediction() {
-  const row = props.players.find((p) => p.player_id === selectedPlayer.value)
+  const row = selectedMatchRow.value
   if (!row) return
 
   error.value = ''
@@ -150,7 +171,7 @@ function activePathIds(treeRoot) {
   const pathIds = new Set((explanation.value?.path_summary?.node_ids ?? []).map((id) => String(id)))
   if (pathIds.size) return pathIds
 
-  const row = props.players.find((p) => p.player_id === selectedPlayer.value)
+  const row = selectedMatchRow.value
   if (!row || !treeRoot) return pathIds
 
   let node = treeRoot
@@ -295,7 +316,13 @@ function formatFixed(value, digits = 3) {
       <label>
         Player
         <select v-model="selectedPlayer">
-          <option v-for="id in options" :key="id" :value="id">{{ id }}</option>
+          <option v-for="id in playerOptions" :key="id" :value="id">{{ id }}</option>
+        </select>
+      </label>
+      <label>
+        Match row
+        <select v-model="selectedMatchKey">
+          <option v-for="row in matchOptions" :key="row.key" :value="row.key">{{ row.label }}</option>
         </select>
       </label>
     </div>
@@ -303,7 +330,7 @@ function formatFixed(value, digits = 3) {
     <h3>Collapsible tree (full model structure + active path)</h3>
     <svg ref="treeSvg" class="chart"></svg>
     <div v-if="pathSummary" class="path-summary">
-      <h3>Selected player path summary</h3>
+      <h3>Selected match path summary</h3>
       <p>
         Leaf {{ pathSummary.leaf_id ?? '-' }} · Samples {{ pathSummary.sample_count ?? '-' }} · Leaf win probability
         {{ pathSummary.leaf_win_probability == null ? '-' : formatFixed(pathSummary.leaf_win_probability) }}
