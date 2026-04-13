@@ -27,6 +27,17 @@ def _format_player_name(first_name: Optional[str], last_name: Optional[str], pla
     return full_name if full_name else player_id
 
 
+def _normalize_player_id(player_id: Any) -> str:
+    text = str(player_id or "").strip()
+    if not text:
+        return ""
+    if text.endswith(".0"):
+        integer_part = text[:-2]
+        if integer_part.isdigit():
+            return integer_part
+    return text
+
+
 @lru_cache(maxsize=1)
 def _player_name_lookup() -> Dict[str, str]:
     lookup: Dict[str, str] = {}
@@ -36,17 +47,23 @@ def _player_name_lookup() -> Dict[str, str]:
             reader = csv.DictReader(fh)
             for row in reader:
                 for team_num in (1, 2):
-                    player_id = (row.get(f"PlayerTeam{team_num}.PlayerId") or "").strip()
+                    raw_player_id = (row.get(f"PlayerTeam{team_num}.PlayerId") or "").strip()
+                    player_id = _normalize_player_id(raw_player_id)
                     if not player_id:
                         continue
                     first_name = row.get(f"PlayerTeam{team_num}.PlayerFirstName")
                     last_name = row.get(f"PlayerTeam{team_num}.PlayerLastName")
-                    lookup[player_id] = _format_player_name(first_name, last_name, player_id)
+                    display_name = _format_player_name(first_name, last_name, player_id)
+                    lookup[player_id] = display_name
+                    if raw_player_id and raw_player_id != player_id:
+                        lookup[raw_player_id] = display_name
     return lookup
 
 
 def _player_display_name(player_id: str) -> str:
-    return _player_name_lookup().get(player_id, player_id)
+    normalized = _normalize_player_id(player_id)
+    lookup = _player_name_lookup()
+    return lookup.get(normalized, lookup.get(player_id, normalized or str(player_id)))
 
 
 @router.post("/cluster")
@@ -296,7 +313,10 @@ def query_players(req: PlayerQueryRequest) -> Dict[str, Any]:
     rows_with_names = []
     for row in rows:
         record = dict(row)
-        record["player_name"] = _player_display_name(str(record.get("player_id", "")))
+        record["player_id"] = _normalize_player_id(record.get("player_id", ""))
+        record["opponent_id"] = _normalize_player_id(record.get("opponent_id", ""))
+        record["player_name"] = _player_display_name(record["player_id"])
+        record["opponent_name"] = _player_display_name(record["opponent_id"])
         rows_with_names.append(record)
 
     return {

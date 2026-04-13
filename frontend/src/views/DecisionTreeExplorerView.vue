@@ -35,7 +35,7 @@ const playerMatchRows = computed(() => props.players.filter((p) => p.player_id =
 const matchOptions = computed(() =>
   playerMatchRows.value.map((row) => ({
     key: matchKeyForRow(row),
-    label: `${row.match_date ?? '-'} · vs ${displayPlayerName(row.opponent_id)} · ${row.surface ?? '-'} · match_id=${row.match_id ?? '-'}`
+    label: `${row.match_date ?? '-'} · vs ${row.opponent_name ?? displayPlayerName(row.opponent_id)} · ${row.surface ?? '-'} · match_id=${row.match_id ?? '-'}`
   }))
 )
 const selectedMatchRow = computed(() =>
@@ -49,7 +49,9 @@ const contextPanel = computed(() => {
   const usedDefaultMedians = predictionResponse.value?.used_default_medians_for
   return {
     player_id: row.player_id ?? '-',
+    player_name: row.player_name ?? displayPlayerName(row.player_id) ?? '-',
     opponent_id: row.opponent_id ?? '-',
+    opponent_name: row.opponent_name ?? displayPlayerName(row.opponent_id) ?? '-',
     match_date: row.match_date ?? '-',
     surface: row.surface ?? '-',
     match_id: row.match_id,
@@ -361,8 +363,9 @@ function formatFixed(value, digits = 3) {
     <div v-if="contextPanel" class="path-summary">
       <h3>Match prediction context</h3>
       <p>
-        <strong>player_id:</strong> {{ contextPanel.player_id }} · <strong>opponent_id:</strong>
-        {{ contextPanel.opponent_id }} · <strong>match_date:</strong> {{ contextPanel.match_date }} ·
+        <strong>player:</strong> {{ contextPanel.player_name }} ({{ contextPanel.player_id }}) ·
+        <strong>opponent:</strong> {{ contextPanel.opponent_name }} ({{ contextPanel.opponent_id }}) ·
+        <strong>match_date:</strong> {{ contextPanel.match_date }} ·
         <strong>surface:</strong> {{ contextPanel.surface }}
         <span v-if="contextPanel.match_id != null && contextPanel.match_id !== ''">
           · <strong>match_id:</strong> {{ contextPanel.match_id }}
