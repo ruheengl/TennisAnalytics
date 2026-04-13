@@ -339,10 +339,10 @@ function formatFixed(value, digits = 3) {
 
 <template>
   <section class="panel">
-    <h2>Decision-tree explorer</h2>
+    <h2>Decision-tree explorer for selected match context</h2>
     <div class="filters">
       <label>
-        Player
+        Focal player
         <select v-model="selectedPlayer">
           <option v-for="player in playerOptions" :key="player.player_id" :value="player.player_id">
             {{ player.player_name }}
@@ -356,6 +356,7 @@ function formatFixed(value, digits = 3) {
         </select>
       </label>
     </div>
+    <p>Choose a focal player, then choose a specific match row to explain.</p>
     <p v-if="error" class="error-text">{{ error }}</p>
     <div v-if="contextPanel" class="path-summary">
       <h3>Match prediction context</h3>
@@ -375,12 +376,12 @@ function formatFixed(value, digits = 3) {
         <strong>win_probability:</strong>
         {{ contextPanel.win_probability == null ? '-' : formatFixed(contextPanel.win_probability) }}
       </p>
-      <p>Prediction is for this match context (focal player vs opponent), not a general player rating.</p>
+      <p>Prediction is for the selected match context (focal player vs opponent), not a general player rating.</p>
     </div>
     <h3>Collapsible tree (full model structure + active path)</h3>
     <svg ref="treeSvg" class="chart"></svg>
     <div v-if="pathSummary" class="path-summary">
-      <h3>Selected match path summary</h3>
+      <h3>Selected match-context path summary</h3>
       <p>
         Leaf {{ pathSummary.leaf_id ?? '-' }} · Samples {{ pathSummary.sample_count ?? '-' }} · Leaf win probability
         {{ pathSummary.leaf_win_probability == null ? '-' : formatFixed(pathSummary.leaf_win_probability) }}

@@ -12,7 +12,7 @@ const tabs = [
   { key: 'search', label: 'Cluster Search / Query' },
   { key: 'performance', label: 'Player Performance' },
   { key: 'degradation', label: 'Degradation Explorer' },
-  { key: 'tree', label: 'Decision-Tree Explorer' }
+  { key: 'tree', label: 'Match Outcome Explainer' }
 ]
 
 const activeTab = ref('overview')
