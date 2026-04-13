@@ -189,6 +189,7 @@ def upsert_parquet(
     con = duckdb.connect()
 
     col_defs = []
+    col_types: Dict[str, str] = {}
     for col in columns:
         if col in {"event_year", "is_winner", "career_matches", "opponent_career_matches"} or col.startswith("matches_last_") or col.startswith("opponent_matches_last_"):
             col_type = "BIGINT"
@@ -196,6 +197,7 @@ def upsert_parquet(
             col_type = "VARCHAR"
         else:
             col_type = "DOUBLE"
+        col_types[col] = col_type
         col_defs.append(f'"{col}" {col_type}')
 
     con.execute(f"CREATE TEMP TABLE updates ({', '.join(col_defs)})")
@@ -207,7 +209,25 @@ def upsert_parquet(
     )
 
     if parquet_path.exists():
-        con.execute("CREATE TEMP TABLE existing AS SELECT * FROM read_parquet(?)", [str(parquet_path)])
+        existing_cols = {
+            row[0]
+            for row in con.execute(
+                "DESCRIBE SELECT * FROM read_parquet(?)",
+                [str(parquet_path)],
+            ).fetchall()
+        }
+        existing_projection = ", ".join(
+            [
+                f'"{col}"'
+                if col in existing_cols
+                else f'CAST(NULL AS {col_types[col]}) AS "{col}"'
+                for col in columns
+            ]
+        )
+        con.execute(
+            f"CREATE TEMP TABLE existing AS SELECT {existing_projection} FROM read_parquet(?)",
+            [str(parquet_path)],
+        )
         if affected_players:
             placeholders = ", ".join(["?"] * len(affected_players))
             con.execute(
