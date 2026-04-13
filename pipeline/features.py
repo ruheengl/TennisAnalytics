@@ -533,15 +533,16 @@ def init_sqlite(sqlite_path: Path, columns: Sequence[str]) -> sqlite3.Connection
     sqlite_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(sqlite_path)
 
+    def sqlite_column_type(col: str) -> str:
+        if col in {"event_year", "is_winner", "career_matches", "opponent_career_matches"} or col.startswith("matches_last_") or col.startswith("opponent_matches_last_"):
+            return "INTEGER"
+        if col in {"match_id", "match_date", "surface", "player_id", "opponent_id"}:
+            return "TEXT"
+        return "REAL"
+
     col_defs = []
     for col in columns:
-        if col in {"event_year", "is_winner", "career_matches", "opponent_career_matches"} or col.startswith("matches_last_") or col.startswith("opponent_matches_last_"):
-            col_type = "INTEGER"
-        elif col in {"match_id", "match_date", "surface", "player_id", "opponent_id"}:
-            col_type = "TEXT"
-        else:
-            col_type = "REAL"
-        col_defs.append(f'"{col}" {col_type}')
+        col_defs.append(f'"{col}" {sqlite_column_type(col)}')
 
     conn.execute(
         f"""
@@ -551,6 +552,15 @@ def init_sqlite(sqlite_path: Path, columns: Sequence[str]) -> sqlite3.Connection
         )
         """
     )
+    existing_columns = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(player_features)")
+    }
+    missing_columns = [col for col in columns if col not in existing_columns]
+    for col in missing_columns:
+        conn.execute(
+            f'ALTER TABLE player_features ADD COLUMN "{col}" {sqlite_column_type(col)}'
+        )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_player_features_match_date ON player_features (match_date)"
     )
