@@ -21,8 +21,10 @@ import csv
 import hashlib
 import json
 import math
+import os
 import sqlite3
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -39,6 +41,7 @@ except ImportError as exc:  # pragma: no cover - runtime dependency guard
 ELO_K_FACTOR = 32.0
 DEFAULT_MATCH_WINDOWS = (5, 10, 20)
 DEFAULT_DAY_WINDOWS = (30, 90, 365)
+DEFAULT_WORKERS = min(8, os.cpu_count() or 1)
 
 FEATURE_COLUMNS: Sequence[Tuple[str, str]] = (
     ("match_id", "Unique match identifier from source cleaned file."),
@@ -152,6 +155,12 @@ def parse_args() -> argparse.Namespace:
         default=list(DEFAULT_DAY_WINDOWS),
         help="Rolling windows over trailing day ranges.",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_WORKERS,
+        help="Worker processes for file-level parallelism (default targets up to 8 physical cores).",
+    )
     return parser.parse_args()
 
 
@@ -236,7 +245,7 @@ def iter_clean_files(input_dir: Path) -> List[Path]:
 
 
 def changed_files(
-    files: Sequence[Path], state: Dict[str, object]
+    files: Sequence[Path], state: Dict[str, object], workers: int
 ) -> Tuple[List[Path], Dict[str, Dict[str, object]]]:
     prior = state.get("file_fingerprints", {}) if isinstance(state, dict) else {}
     if not isinstance(prior, dict):
@@ -244,6 +253,7 @@ def changed_files(
 
     changed: List[Path] = []
     fingerprints: Dict[str, Dict[str, object]] = {}
+    files_requiring_hash: List[Path] = []
     for path in files:
         path_key = str(path)
         current_meta = file_metadata(path)
@@ -259,93 +269,125 @@ def changed_files(
                 "sha256": previous.get("sha256"),
             }
             continue
+        files_requiring_hash.append(path)
         current_fp = {
             "size": current_meta["size"],
             "mtime": current_meta["mtime"],
-            "sha256": file_sha256(path),
         }
         fingerprints[path_key] = current_fp
-        if previous != current_fp:
-            changed.append(path)
+    if files_requiring_hash:
+        if workers > 1:
+            with ProcessPoolExecutor(max_workers=workers) as pool:
+                sha_values = list(pool.map(file_sha256, files_requiring_hash))
+        else:
+            sha_values = [file_sha256(path) for path in files_requiring_hash]
+        for path, sha in zip(files_requiring_hash, sha_values):
+            path_key = str(path)
+            fingerprints[path_key]["sha256"] = sha
+            if prior.get(path_key) != fingerprints[path_key]:
+                changed.append(path)
     return changed, fingerprints
 
 
-def collect_affected_players(files: Sequence[Path]) -> Set[str]:
+def affected_players_from_file(file_path: Path) -> Set[str]:
     affected: Set[str] = set()
-    for file_path in files:
-        with file_path.open() as fh:
-            reader = csv.DictReader(fh)
-            for row in reader:
-                for key in ("PlayerTeam1.PlayerId", "PlayerTeam2.PlayerId"):
-                    player_id = (row.get(key) or "").strip()
-                    if player_id:
-                        affected.add(player_id)
+    with file_path.open() as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            for key in ("PlayerTeam1.PlayerId", "PlayerTeam2.PlayerId"):
+                player_id = (row.get(key) or "").strip()
+                if player_id:
+                    affected.add(player_id)
     return affected
 
 
-def extract_observations(input_files: Sequence[Path], players: Optional[Set[str]]) -> List[PlayerMatchObservation]:
-    observations: List[PlayerMatchObservation] = []
+def collect_affected_players(files: Sequence[Path], workers: int) -> Set[str]:
+    affected: Set[str] = set()
+    if workers > 1:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            for player_set in pool.map(affected_players_from_file, files):
+                affected.update(player_set)
+    else:
+        for file_path in files:
+            affected.update(affected_players_from_file(file_path))
+    return affected
 
-    for file_path in input_files:
-        with file_path.open() as fh:
-            reader = csv.DictReader(fh)
-            for row in reader:
-                match_id = (row.get("MatchId") or "").strip()
-                match_date = parse_date(row.get("StartDate") or "")
-                if not match_id or match_date is None:
+
+def extract_observations_from_file(
+    file_path: Path, players: Optional[Set[str]]
+) -> List[PlayerMatchObservation]:
+    observations: List[PlayerMatchObservation] = []
+    with file_path.open() as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            match_id = (row.get("MatchId") or "").strip()
+            match_date = parse_date(row.get("StartDate") or "")
+            if not match_id or match_date is None:
+                continue
+
+            event_year = int(parse_float(row.get("EventYear")) or match_date.year)
+            surface = infer_surface(row)
+            winner_id = (row.get("WinningPlayerId") or "").strip()
+
+            entries = [
+                ("PlayerTeam1", "PlayerTeam2"),
+                ("PlayerTeam2", "PlayerTeam1"),
+            ]
+
+            for side, opponent_side in entries:
+                player_id = (row.get(f"{side}.PlayerId") or "").strip()
+                opponent_id = (row.get(f"{opponent_side}.PlayerId") or "").strip()
+                if not player_id or not opponent_id:
+                    continue
+                if players is not None and player_id not in players:
                     continue
 
-                event_year = int(parse_float(row.get("EventYear")) or match_date.year)
-                surface = infer_surface(row)
-                winner_id = (row.get("WinningPlayerId") or "").strip()
+                service_games = parse_float(
+                    row.get(f"{side}.Sets[0].Stats.ServiceStats.ServiceGamesPlayed.Number")
+                )
+                aces = parse_float(row.get(f"{side}.Sets[0].Stats.ServiceStats.Aces.Number"))
+                dfs = parse_float(row.get(f"{side}.Sets[0].Stats.ServiceStats.DoubleFaults.Number"))
 
-                entries = [
-                    ("PlayerTeam1", "PlayerTeam2"),
-                    ("PlayerTeam2", "PlayerTeam1"),
-                ]
-
-                for side, opponent_side in entries:
-                    player_id = (row.get(f"{side}.PlayerId") or "").strip()
-                    opponent_id = (row.get(f"{opponent_side}.PlayerId") or "").strip()
-                    if not player_id or not opponent_id:
-                        continue
-                    if players is not None and player_id not in players:
-                        continue
-
-                    service_games = parse_float(
-                        row.get(f"{side}.Sets[0].Stats.ServiceStats.ServiceGamesPlayed.Number")
+                observations.append(
+                    PlayerMatchObservation(
+                        match_id=match_id,
+                        match_date=match_date,
+                        event_year=event_year,
+                        surface=surface,
+                        player_id=player_id,
+                        opponent_id=opponent_id,
+                        is_winner=1 if winner_id and winner_id == player_id else 0,
+                        service_points_won_pct=parse_float(
+                            row.get(f"{side}.Sets[0].Stats.PointStats.TotalServicePointsWon.Percent")
+                        ),
+                        return_points_won_pct=parse_float(
+                            row.get(f"{side}.Sets[0].Stats.PointStats.TotalReturnPointsWon.Percent")
+                        ),
+                        aces_per_service_game=safe_ratio(aces, service_games),
+                        double_faults_per_service_game=safe_ratio(dfs, service_games),
+                        break_points_saved_pct=parse_float(
+                            row.get(f"{side}.Sets[0].Stats.ServiceStats.BreakPointsSaved.Percent")
+                        ),
                     )
-                    aces = parse_float(row.get(f"{side}.Sets[0].Stats.ServiceStats.Aces.Number"))
-                    dfs = parse_float(row.get(f"{side}.Sets[0].Stats.ServiceStats.DoubleFaults.Number"))
+                )
+    return observations
 
-                    observations.append(
-                        PlayerMatchObservation(
-                            match_id=match_id,
-                            match_date=match_date,
-                            event_year=event_year,
-                            surface=surface,
-                            player_id=player_id,
-                            opponent_id=opponent_id,
-                            is_winner=1 if winner_id and winner_id == player_id else 0,
-                            service_points_won_pct=parse_float(
-                                row.get(
-                                    f"{side}.Sets[0].Stats.PointStats.TotalServicePointsWon.Percent"
-                                )
-                            ),
-                            return_points_won_pct=parse_float(
-                                row.get(
-                                    f"{side}.Sets[0].Stats.PointStats.TotalReturnPointsWon.Percent"
-                                )
-                            ),
-                            aces_per_service_game=safe_ratio(aces, service_games),
-                            double_faults_per_service_game=safe_ratio(dfs, service_games),
-                            break_points_saved_pct=parse_float(
-                                row.get(
-                                    f"{side}.Sets[0].Stats.ServiceStats.BreakPointsSaved.Percent"
-                                )
-                            ),
-                        )
-                    )
+
+def extract_observations(
+    input_files: Sequence[Path], players: Optional[Set[str]], workers: int
+) -> List[PlayerMatchObservation]:
+    observations: List[PlayerMatchObservation] = []
+    if workers > 1:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            for file_observations in pool.map(
+                extract_observations_from_file,
+                input_files,
+                [players] * len(input_files),
+            ):
+                observations.extend(file_observations)
+    else:
+        for file_path in input_files:
+            observations.extend(extract_observations_from_file(file_path, players))
 
     observations.sort(key=lambda x: (x.match_date, x.match_id, x.player_id))
     return observations
@@ -688,11 +730,12 @@ def build_feature_rows(
     changed: Sequence[Path],
     match_windows: Sequence[int],
     day_windows: Sequence[int],
+    workers: int,
 ) -> Tuple[List[Dict[str, object]], Set[str]]:
     if not changed:
         return [], set()
-    affected_players = collect_affected_players(changed)
-    observations = extract_observations(all_files, affected_players)
+    affected_players = collect_affected_players(changed, workers)
+    observations = extract_observations(all_files, affected_players, workers)
     rows = compute_features(observations, match_windows, day_windows)
     return rows, affected_players
 
@@ -706,13 +749,16 @@ def main() -> int:
         raise SystemExit(f"No cleaned files found under {args.input_dir}")
 
     state = load_state(args.state_file)
-    changed, fingerprints = changed_files(files, state)
+    workers = max(1, args.workers)
+    changed, fingerprints = changed_files(files, state, workers)
 
     if not changed:
         print("No changed input files detected; feature artifacts are already up to date.")
         return 0
 
-    rows, affected_players = build_feature_rows(files, changed, args.match_windows, args.day_windows)
+    rows, affected_players = build_feature_rows(
+        files, changed, args.match_windows, args.day_windows, workers
+    )
     if not rows:
         print("Changed files detected but no feature rows produced; nothing to persist.")
         return 0
