@@ -2,16 +2,12 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { apiGet, apiPost } from './services/api'
 import ClusterOverviewView from './views/ClusterOverviewView.vue'
-import ClusterSearchView from './views/ClusterSearchView.vue'
 import PlayerPerformanceView from './views/PlayerPerformanceView.vue'
-import DegradationExplorerView from './views/DegradationExplorerView.vue'
 import DecisionTreeExplorerView from './views/DecisionTreeExplorerView.vue'
 
 const tabs = [
   { key: 'overview', label: 'Cluster Overview' },
-  { key: 'search', label: 'Cluster Search / Query' },
   { key: 'performance', label: 'Player Performance' },
-  { key: 'degradation', label: 'Degradation Explorer' },
   { key: 'tree', label: 'Match Outcome Explainer' }
 ]
 
@@ -434,23 +430,12 @@ async function runClustering() {
       :projection-metadata="projectionMetadata"
     />
 
-    <ClusterSearchView
-      v-else-if="activeTab === 'search'"
-      :cluster-result="clusterResult"
-      :players="enrichedPlayers"
-      :clustering-config="activeClusteringConfig"
-      :projection-metadata="projectionMetadata"
-    />
 
     <PlayerPerformanceView
       v-else-if="activeTab === 'performance'"
       :players="enrichedPlayers"
     />
 
-    <DegradationExplorerView
-      v-else-if="activeTab === 'degradation'"
-      :players="enrichedPlayers"
-    />
 
     <DecisionTreeExplorerView
       v-else
