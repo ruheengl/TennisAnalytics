@@ -2,7 +2,8 @@
 """Generate player-level feature vectors from cleaned ATP match CSV files."""
 
 from __future__ import annotations
-
+import sys, os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import argparse
 import os
 import sqlite3
