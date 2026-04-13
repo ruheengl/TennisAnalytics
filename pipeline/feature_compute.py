@@ -39,24 +39,73 @@ def linear_slope(values: Sequence[float]) -> Optional[float]:
 class MatchWindowState:
     maxlen: int
     entries: Deque[HistoryEntry] = field(default_factory=deque)
+    wins_sum: float = 0.0
+    service_sum: float = 0.0
+    service_count: int = 0
+    return_sum: float = 0.0
+    return_count: int = 0
+    elo_sum: float = 0.0
+    elo_xy_sum: float = 0.0
+    win_indicator_sum: float = 0.0
+    win_indicator_xy_sum: float = 0.0
 
     def push(self, entry: HistoryEntry) -> None:
+        prev_len = len(self.entries)
+        if prev_len == self.maxlen:
+            self._evict_oldest()
+            prev_len -= 1
         self.entries.append(entry)
-        if len(self.entries) > self.maxlen:
-            self.entries.popleft()
+        self.wins_sum += entry.is_win
+        self.elo_sum += entry.elo_pre
+        self.elo_xy_sum += prev_len * entry.elo_pre
+        win_val = float(entry.is_win)
+        self.win_indicator_sum += win_val
+        self.win_indicator_xy_sum += prev_len * win_val
+        if entry.service_points_won_pct is not None:
+            self.service_sum += entry.service_points_won_pct
+            self.service_count += 1
+        if entry.return_points_won_pct is not None:
+            self.return_sum += entry.return_points_won_pct
+            self.return_count += 1
+
+    def _evict_oldest(self) -> None:
+        if not self.entries:
+            return
+        oldest = self.entries.popleft()
+        old_elo_sum = self.elo_sum
+        old_win_sum = self.win_indicator_sum
+        self.wins_sum -= oldest.is_win
+        self.elo_sum -= oldest.elo_pre
+        self.win_indicator_sum -= float(oldest.is_win)
+        self.elo_xy_sum = self.elo_xy_sum - (old_elo_sum - oldest.elo_pre)
+        self.win_indicator_xy_sum = self.win_indicator_xy_sum - (old_win_sum - float(oldest.is_win))
+        if oldest.service_points_won_pct is not None:
+            self.service_sum -= oldest.service_points_won_pct
+            self.service_count -= 1
+        if oldest.return_points_won_pct is not None:
+            self.return_sum -= oldest.return_points_won_pct
+            self.return_count -= 1
 
     def win_pct(self) -> Optional[float]:
         if not self.entries:
             return None
-        return sum(e.is_win for e in self.entries) / len(self.entries)
+        return self.wins_sum / len(self.entries)
 
     def elo_slope(self) -> Optional[float]:
-        return linear_slope([e.elo_pre for e in self.entries])
+        return _slope_from_sums(len(self.entries), self.elo_sum, self.elo_xy_sum)
 
     def win_pct_slope(self) -> Optional[float]:
-        return linear_slope([float(e.is_win) for e in self.entries])
+        return _slope_from_sums(len(self.entries), self.win_indicator_sum, self.win_indicator_xy_sum)
 
     def average_metric(self, attr: str) -> Optional[float]:
+        if attr == "service_points_won_pct":
+            if self.service_count == 0:
+                return None
+            return self.service_sum / float(self.service_count)
+        if attr == "return_points_won_pct":
+            if self.return_count == 0:
+                return None
+            return self.return_sum / float(self.return_count)
         values = [getattr(e, attr) for e in self.entries if getattr(e, attr) is not None]
         if not values:
             return None
@@ -67,14 +116,25 @@ class MatchWindowState:
 class DayWindowState:
     max_days: int
     entries: Deque[HistoryEntry] = field(default_factory=deque)
+    wins_sum: float = 0.0
+    elo_sum: float = 0.0
+    elo_xy_sum: float = 0.0
 
     def evict_old(self, current_date: date) -> None:
         cutoff = current_date.toordinal() - self.max_days
         while self.entries and self.entries[0].match_date.toordinal() < cutoff:
-            self.entries.popleft()
+            oldest = self.entries.popleft()
+            old_elo_sum = self.elo_sum
+            self.wins_sum -= oldest.is_win
+            self.elo_sum -= oldest.elo_pre
+            self.elo_xy_sum = self.elo_xy_sum - (old_elo_sum - oldest.elo_pre)
 
     def push(self, entry: HistoryEntry) -> None:
+        idx = len(self.entries)
         self.entries.append(entry)
+        self.wins_sum += entry.is_win
+        self.elo_sum += entry.elo_pre
+        self.elo_xy_sum += idx * entry.elo_pre
 
     def matches(self) -> int:
         return len(self.entries)
@@ -82,10 +142,21 @@ class DayWindowState:
     def win_pct(self) -> Optional[float]:
         if not self.entries:
             return None
-        return sum(e.is_win for e in self.entries) / len(self.entries)
+        return self.wins_sum / len(self.entries)
 
     def elo_slope(self) -> Optional[float]:
-        return linear_slope([e.elo_pre for e in self.entries])
+        return _slope_from_sums(len(self.entries), self.elo_sum, self.elo_xy_sum)
+
+
+def _slope_from_sums(n: int, y_sum: float, xy_sum: float) -> Optional[float]:
+    if n < 2:
+        return None
+    x_sum = (n - 1) * n / 2.0
+    xx_sum = (n - 1) * n * (2 * n - 1) / 6.0
+    denom = n * xx_sum - x_sum * x_sum
+    if abs(denom) < 1e-12:
+        return None
+    return (n * xy_sum - x_sum * y_sum) / denom
 
 
 @dataclass
