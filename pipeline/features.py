@@ -565,8 +565,11 @@ def upsert_parquet(
         col_defs.append(f'"{col}" {col_type}')
 
     con.execute(f"CREATE TEMP TABLE updates ({', '.join(col_defs)})")
+    cols = ', '.join(f'"{c}"' for c in columns)
+    placeholders = ', '.join(['?'] * len(columns))
+
     con.executemany(
-        f"INSERT INTO updates ({', '.join(f'\"{c}\"' for c in columns)}) VALUES ({', '.join(['?'] * len(columns))})",
+        f"INSERT INTO updates ({cols}) VALUES ({placeholders})",
         [tuple(row[c] for c in columns) for row in rows],
     )
 
