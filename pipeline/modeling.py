@@ -126,23 +126,28 @@ def load_dataset(sqlite_path: Path, table: str) -> Dataset:
     )
 
 
-def _split_by_season(seasons: np.ndarray) -> Tuple[np.ndarray, np.ndarray, int]:
+def _split_by_season(seasons: np.ndarray) -> Tuple[np.ndarray, np.ndarray, List[int]]:
     unique = sorted(int(x) for x in np.unique(seasons))
-    holdout_year = unique[-1]
+    preferred_holdout_years = [2025, 2026]
+    holdout_years = [year for year in preferred_holdout_years if year in unique]
+    if not holdout_years:
+        holdout_years = [unique[-1]]
+
     if len(unique) < 2:
         rng = np.random.default_rng(42)
         idx = np.arange(len(seasons))
         rng.shuffle(idx)
         split = int(len(idx) * 0.8)
-        return idx[:split], idx[split:], holdout_year
+        return idx[:split], idx[split:], holdout_years
 
-    train_idx = np.where(seasons < holdout_year)[0]
-    test_idx = np.where(seasons == holdout_year)[0]
+    holdout_min_year = min(holdout_years)
+    train_idx = np.where(seasons < holdout_min_year)[0]
+    test_idx = np.where(np.isin(seasons, holdout_years))[0]
     if len(test_idx) == 0 or len(train_idx) == 0:
         idx = np.arange(len(seasons))
         split = int(len(idx) * 0.8)
-        return idx[:split], idx[split:], holdout_year
-    return train_idx, test_idx, holdout_year
+        return idx[:split], idx[split:], holdout_years
+    return train_idx, test_idx, holdout_years
 
 
 def _imputer_stats(x_train: np.ndarray) -> np.ndarray:
@@ -264,7 +269,7 @@ def _group_metrics(
 
 def train_and_export(args: argparse.Namespace) -> Dict[str, Any]:
     data = load_dataset(args.sqlite_path, args.table)
-    train_idx, test_idx, holdout_year = _split_by_season(data.seasons)
+    train_idx, test_idx, holdout_years = _split_by_season(data.seasons)
 
     x_train_raw = data.x[train_idx]
     x_test_raw = data.x[test_idx]
@@ -298,7 +303,7 @@ def train_and_export(args: argparse.Namespace) -> Dict[str, Any]:
 
     evaluation = {
         "split": {
-            "holdout_year": int(holdout_year),
+            "holdout_years": holdout_years,
             "train_rows": int(len(train_idx)),
             "test_rows": int(len(test_idx)),
         },
@@ -340,13 +345,16 @@ def train_and_export(args: argparse.Namespace) -> Dict[str, Any]:
         "feature_importance": str(feature_path),
         "top_decision_paths": str(paths_path),
         "evaluation_metrics": str(eval_path),
-        "holdout_year": int(holdout_year),
+        "holdout_years": holdout_years,
+        "validation_accuracy": evaluation["overall"]["accuracy"],
     }
 
 
 def main() -> int:
     args = parse_args()
     result = train_and_export(args)
+    if result.get("validation_accuracy") is not None:
+        print(f"Validation accuracy: {result['validation_accuracy']:.4f}")
     print(json.dumps(result, indent=2))
     return 0
 
