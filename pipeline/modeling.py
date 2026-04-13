@@ -25,7 +25,16 @@ except ImportError as exc:  # pragma: no cover
 
 ID_COLUMNS = {"match_id", "match_date", "surface", "player_id", "opponent_id"}
 TARGET_COLUMN = "is_winner"
-LEAKED_COLUMNS = {"elo_delta_expected"}
+# Match-level box score statistics are post-match outcomes and must never be
+# available to pre-match prediction features.
+LEAKED_COLUMNS = {
+    "elo_delta_expected",
+    "service_points_won_pct",
+    "return_points_won_pct",
+    "aces_per_service_game",
+    "double_faults_per_service_game",
+    "break_points_saved_pct",
+}
 DEFAULT_MODEL_DIR = Path("data/models")
 
 
