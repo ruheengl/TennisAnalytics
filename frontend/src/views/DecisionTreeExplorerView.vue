@@ -16,8 +16,7 @@ const collapsed = ref(new Set())
 const explanation = ref(null)
 const predictionResponse = ref(null)
 const error = ref('')
-const schemaGuardMessage = 'Predictor schema unavailable. Refresh health or ensure model artifact is loaded.'
-const canRequestPrediction = computed(() => Array.isArray(props.featureColumns) && props.featureColumns.length > 0)
+const canRequestPrediction = computed(() => Boolean(selectedMatchRow.value?.row_id))
 
 const playerNameById = computed(() =>
   Object.fromEntries(props.players.map((p) => [p.player_id, p.player_name ?? p.player_id]))
@@ -30,6 +29,7 @@ const playerOptions = computed(() =>
   }))
 )
 const matchKeyForRow = (row) => {
+  if (row?.row_id != null && row.row_id !== '') return `row:${row.row_id}`
   if (row?.match_id != null && row.match_id !== '') return `match:${row.match_id}`
   return `composite:${row?.player_id ?? ''}|${row?.opponent_id ?? ''}|${row?.match_date ?? ''}`
 }
@@ -92,7 +92,7 @@ watch(collapsed, drawTree, { deep: true })
 
 async function loadPrediction() {
   if (!canRequestPrediction.value) {
-    error.value = schemaGuardMessage
+    error.value = 'No row_id found for selected row.'
     return
   }
 
@@ -101,14 +101,7 @@ async function loadPrediction() {
 
   error.value = ''
   try {
-    const features = {}
-    for (const col of props.featureColumns) {
-      const value = row[col]
-      const missing = value == null || value === '' || (typeof value === 'number' && Number.isNaN(value))
-      features[col] = missing ? null : Number(value)
-    }
-
-    const resp = await apiPost('/predict', { features, top_k_features: 8 })
+    const resp = await apiPost('/predict', { row_id: Number(row.row_id), top_k_features: 8 })
     predictionResponse.value = resp
     explanation.value = resp.explanation
     collapsed.value = new Set()

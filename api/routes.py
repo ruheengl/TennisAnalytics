@@ -311,7 +311,7 @@ def query_players(req: PlayerQueryRequest) -> Dict[str, Any]:
             order_clause = f' ORDER BY "{req.sort_by}" {req.sort_order.upper()}'
 
         sql = f"""
-            SELECT * FROM player_features
+            SELECT rowid AS row_id, * FROM player_features
             {where_clause}
             {order_clause}
             LIMIT ? OFFSET ?
@@ -451,12 +451,20 @@ def predict_match_outcome(req: PredictRequest) -> Dict[str, Any]:
     feature_columns = list(predictor["feature_columns"])
     medians = np.asarray(predictor["imputer_medians"], dtype=np.float64)
     threshold = float(predictor.get("threshold", 0.5))
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT rowid AS row_id, * FROM player_features WHERE rowid = ? LIMIT 1",
+            (req.row_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Unknown row_id: {req.row_id}")
+    record = dict(row)
 
     x = np.asarray(
         [
             [
-                float(req.features.get(col))
-                if req.features.get(col) is not None
+                float(record.get(col))
+                if record.get(col) is not None and record.get(col) != ""
                 else float(medians[idx])
                 for idx, col in enumerate(feature_columns)
             ]
@@ -481,8 +489,9 @@ def predict_match_outcome(req: PredictRequest) -> Dict[str, Any]:
         "model_type": predictor.get("model_type", "tree_model"),
         "trained_at": predictor.get("trained_at"),
         "used_default_medians_for": [
-            col for col in feature_columns if req.features.get(col) is None
+            col for col in feature_columns if record.get(col) is None or record.get(col) == ""
         ],
+        "row_id": int(record["row_id"]),
         "explanation": explanation,
     }
 

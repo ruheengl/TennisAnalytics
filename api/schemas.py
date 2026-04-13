@@ -70,9 +70,7 @@ class TrendQueryParams(BaseModel):
 
 
 class PredictRequest(BaseModel):
-    features: Dict[str, float] = Field(
-        ..., description="Feature vector aligned to training feature names."
-    )
+    row_id: int = Field(..., ge=1, description="Unique SQLite row id for player_features.")
     top_k_features: int = Field(5, ge=1, le=20)
     include_tree_structure: bool = Field(
         True,
