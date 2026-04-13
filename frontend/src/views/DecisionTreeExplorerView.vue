@@ -14,6 +14,7 @@ const treeSvg = ref()
 const barSvg = ref()
 const collapsed = ref(new Set())
 const explanation = ref(null)
+const predictionResponse = ref(null)
 const error = ref('')
 
 const playerNameById = computed(() =>
@@ -41,6 +42,22 @@ const selectedMatchRow = computed(() =>
   props.players.find((row) => matchKeyForRow(row) === selectedMatchKey.value) ?? null
 )
 const pathSummary = computed(() => explanation.value?.path_summary ?? null)
+const contextPanel = computed(() => {
+  const row = selectedMatchRow.value
+  if (!row) return null
+
+  const usedDefaultMedians = predictionResponse.value?.used_default_medians_for
+  return {
+    player_id: row.player_id ?? '-',
+    opponent_id: row.opponent_id ?? '-',
+    match_date: row.match_date ?? '-',
+    surface: row.surface ?? '-',
+    match_id: row.match_id,
+    imputed_count: Array.isArray(usedDefaultMedians) ? usedDefaultMedians.length : null,
+    predicted_outcome: predictionResponse.value?.predicted_outcome ?? null,
+    win_probability: predictionResponse.value?.win_probability ?? null
+  }
+})
 
 onMounted(async () => {
   if (!selectedPlayer.value && playerOptions.value.length > 0) {
@@ -72,9 +89,11 @@ async function loadPrediction() {
     }
 
     const resp = await apiPost('/predict', { features, top_k_features: 8 })
+    predictionResponse.value = resp
     explanation.value = resp.explanation
     collapsed.value = new Set()
   } catch (err) {
+    predictionResponse.value = null
     error.value = err instanceof Error ? err.message : String(err)
   }
 }
@@ -338,6 +357,26 @@ function formatFixed(value, digits = 3) {
       </label>
     </div>
     <p v-if="error" class="error-text">{{ error }}</p>
+    <div v-if="contextPanel" class="path-summary">
+      <h3>Match prediction context</h3>
+      <p>
+        <strong>player_id:</strong> {{ contextPanel.player_id }} · <strong>opponent_id:</strong>
+        {{ contextPanel.opponent_id }} · <strong>match_date:</strong> {{ contextPanel.match_date }} ·
+        <strong>surface:</strong> {{ contextPanel.surface }}
+        <span v-if="contextPanel.match_id != null && contextPanel.match_id !== ''">
+          · <strong>match_id:</strong> {{ contextPanel.match_id }}
+        </span>
+        <span v-if="contextPanel.imputed_count != null">
+          · <strong>imputed fields:</strong> {{ contextPanel.imputed_count }}
+        </span>
+      </p>
+      <p>
+        <strong>predicted_outcome:</strong> {{ contextPanel.predicted_outcome ?? '-' }} ·
+        <strong>win_probability:</strong>
+        {{ contextPanel.win_probability == null ? '-' : formatFixed(contextPanel.win_probability) }}
+      </p>
+      <p>Prediction is for this match context (focal player vs opponent), not a general player rating.</p>
+    </div>
     <h3>Collapsible tree (full model structure + active path)</h3>
     <svg ref="treeSvg" class="chart"></svg>
     <div v-if="pathSummary" class="path-summary">
