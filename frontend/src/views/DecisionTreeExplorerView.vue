@@ -14,6 +14,12 @@ const treeSvg = ref()
 const treeViewport = ref()
 const barSvg = ref()
 const collapsed = ref(new Set())
+const zoomBehavior = ref(null)
+const zoomTransform = ref(d3.zoomIdentity)
+const defaultTransform = ref(d3.zoomIdentity)
+const latestVisibleLayout = ref([])
+const highlightedNodeIdsForView = ref(new Set())
+const dimNonPathBranches = ref(false)
 const explanation = ref(null)
 const predictionResponse = ref(null)
 const error = ref('')
@@ -96,6 +102,7 @@ watch(explanation, () => {
   drawBars()
 })
 watch(collapsed, drawTree, { deep: true })
+watch(dimNonPathBranches, drawTree)
 
 async function loadPrediction() {
   if (!canRequestPrediction.value) {
@@ -238,6 +245,7 @@ function activePathIds(treeRoot) {
 function drawTree() {
   const svg = d3.select(treeSvg.value)
   svg.selectAll('*').remove()
+  latestVisibleLayout.value = []
   if (!explanation.value) return
 
   const treeRoot = treeData()
@@ -281,15 +289,43 @@ function drawTree() {
   const minX = d3.min(visibleNodes, (node) => node.x) ?? 0
   const maxX = d3.max(visibleNodes, (node) => node.x) ?? 0
   const maxY = d3.max(visibleNodes, (node) => node.y) ?? 0
-  const maxDepth = d3.max(visibleNodes, (node) => node.depth) ?? 0
-  const width = Math.max(1500, maxX - minX + 260)
-  const height = Math.max(480, (maxDepth + 1) * (depthSpacing + 18))
-  const offsetX = 130 - minX
-  const offsetY = 38
+  const minY = d3.min(visibleNodes, (node) => node.y) ?? 0
+  const contentPaddingX = 120
+  const contentPaddingY = 46
+  const viewportWidth = treeViewport.value?.clientWidth ?? 980
+  const viewportHeight = 560
+  const width = Math.max(780, viewportWidth)
+  const height = viewportHeight
 
   svg.attr('viewBox', `0 0 ${width} ${height}`).attr('width', width).attr('height', height)
 
-  const graph = svg.append('g').attr('transform', `translate(${offsetX},${offsetY})`)
+  const zoomLayer = svg.append('g').attr('class', 'zoom-layer')
+  const graph = zoomLayer.append('g')
+  const positionedNodes = new Map(
+    visibleNodes.map((node) => [
+      node.data.id,
+      {
+        px: node.x - minX + contentPaddingX,
+        py: node.y - minY + contentPaddingY
+      }
+    ])
+  )
+  const contentWidth = maxX - minX + contentPaddingX * 2
+  const contentHeight = maxY - minY + contentPaddingY * 2
+  const contentBounds = {
+    minX: contentPaddingX,
+    maxX: contentPaddingX + (maxX - minX),
+    minY: contentPaddingY,
+    maxY: contentPaddingY + (maxY - minY),
+    width: contentWidth,
+    height: contentHeight
+  }
+  latestVisibleLayout.value = visibleNodes.map((node) => ({
+    id: String(node.data.id),
+    x: positionedNodes.get(node.data.id).px,
+    y: positionedNodes.get(node.data.id).py
+  }))
+  highlightedNodeIdsForView.value = new Set([...highlightedNodeIds].map((id) => String(id)))
 
   graph
     .append('g')
@@ -300,18 +336,34 @@ function drawTree() {
     .attr('stroke', (d) =>
       highlightedLinkIds.has(`${d.source.data.id}->${d.target.data.id}`) ? '#f97316' : '#94a3b8'
     )
+    .attr('stroke-opacity', (d) => {
+      if (!dimNonPathBranches.value) return 1
+      return highlightedLinkIds.has(`${d.source.data.id}->${d.target.data.id}`) ? 1 : 0.14
+    })
     .attr('stroke-width', (d) =>
       highlightedLinkIds.has(`${d.source.data.id}->${d.target.data.id}`) ? 3 : 1.5
     )
-    .attr('d', (d) => d3.linkVertical()({ source: [d.source.x, d.source.y], target: [d.target.x, d.target.y] }))
+    .attr('d', (d) =>
+      d3.linkVertical()({
+        source: [positionedNodes.get(d.source.data.id).px, positionedNodes.get(d.source.data.id).py],
+        target: [positionedNodes.get(d.target.data.id).px, positionedNodes.get(d.target.data.id).py]
+      })
+    )
 
   const nodes = graph
     .append('g')
     .selectAll('g')
     .data(visibleNodes)
     .join('g')
-    .attr('transform', (d) => `translate(${d.x},${d.y})`)
+    .attr('transform', (d) => {
+      const pos = positionedNodes.get(d.data.id)
+      return `translate(${pos.px},${pos.py})`
+    })
     .style('cursor', 'pointer')
+    .style('opacity', (d) => {
+      if (!dimNonPathBranches.value) return 1
+      return highlightedNodeIds.has(String(d.data.id)) ? 1 : 0.16
+    })
     .on('click', (_, d) => {
       if (!d.children?.length) return
       const next = new Set(collapsed.value)
@@ -332,6 +384,7 @@ function drawTree() {
     })
     .attr('stroke', (d) => (highlightedNodeIds.has(String(d.data.id)) ? '#ea580c' : '#1e293b'))
     .attr('stroke-width', (d) => (highlightedNodeIds.has(String(d.data.id)) ? 2.5 : 1))
+
   nodes
     .append('text')
     .attr('dy', -12)
@@ -340,16 +393,116 @@ function drawTree() {
     .style('font-weight', (d) => (d.data.isLeaf ? 600 : 500))
     .text((d) => d.data.name)
 
-  if (treeViewport.value && visibleNodes.length) {
-    const activeNodes = visibleNodes.filter((node) => highlightedNodeIds.has(String(node.data.id)))
-    const focusNodes = activeNodes.length ? activeNodes : visibleNodes.filter((node) => node.depth <= 2)
-    const focusMinX = d3.min(focusNodes, (node) => node.x + offsetX) ?? 0
-    const focusMaxX = d3.max(focusNodes, (node) => node.x + offsetX) ?? width
-    const viewport = treeViewport.value
-    const centerX = (focusMinX + focusMaxX) / 2
-    const nextScrollLeft = Math.max(0, centerX - viewport.clientWidth / 2)
-    viewport.scrollTo({ left: nextScrollLeft, behavior: 'auto' })
-  }
+  const adjacentSplitNodes = visibleNodes.filter((node) => {
+    const parentOnPath = node.parent && highlightedNodeIds.has(String(node.parent.data.id))
+    const onPath = highlightedNodeIds.has(String(node.data.id))
+    return node.children?.length && (parentOnPath || onPath)
+  })
+
+  graph
+    .append('g')
+    .selectAll('g')
+    .data(adjacentSplitNodes)
+    .join('g')
+    .attr('transform', (d) => {
+      const pos = positionedNodes.get(d.data.id)
+      return `translate(${pos.px + 12},${pos.py - 26})`
+    })
+    .style('opacity', (d) => {
+      if (!dimNonPathBranches.value) return 1
+      return highlightedNodeIds.has(String(d.data.id)) ? 1 : 0.35
+    })
+    .style('cursor', 'pointer')
+    .on('click', (event, d) => {
+      event.stopPropagation()
+      const next = new Set(collapsed.value)
+      if (next.has(d.data.id)) {
+        next.delete(d.data.id)
+      } else {
+        next.add(d.data.id)
+      }
+      collapsed.value = next
+    })
+    .call((group) => {
+      group
+        .append('rect')
+        .attr('x', -10)
+        .attr('y', -9)
+        .attr('width', 20)
+        .attr('height', 16)
+        .attr('rx', 4)
+        .attr('fill', '#ffffff')
+        .attr('stroke', '#475569')
+        .attr('stroke-width', 1)
+      group
+        .append('text')
+        .attr('text-anchor', 'middle')
+        .attr('dominant-baseline', 'middle')
+        .style('font-size', '12px')
+        .style('font-weight', 700)
+        .attr('fill', '#0f172a')
+        .text((d) => (collapsed.value.has(d.data.id) ? '+' : '−'))
+    })
+
+  setupZoom(width, height, contentBounds)
+}
+
+function setupZoom(svgWidth, svgHeight, contentBounds) {
+  if (!treeSvg.value) return
+  const svg = d3.select(treeSvg.value)
+  const behavior =
+    zoomBehavior.value ??
+    d3
+      .zoom()
+      .scaleExtent([0.35, 4.5])
+      .on('zoom', (event) => {
+        zoomTransform.value = event.transform
+        svg.select('.zoom-layer').attr('transform', event.transform)
+      })
+
+  zoomBehavior.value = behavior
+  svg.call(behavior).on('dblclick.zoom', null)
+  const hasExistingTransform = zoomTransform.value.k !== 1 || zoomTransform.value.x !== 0 || zoomTransform.value.y !== 0
+
+  defaultTransform.value = fitTransform(contentBounds, svgWidth, svgHeight)
+  const initialTransform = hasExistingTransform ? zoomTransform.value : defaultTransform.value
+  svg.call(behavior.transform, initialTransform)
+}
+
+function fitTransform(bounds, svgWidth, svgHeight) {
+  const width = Math.max(1, bounds.maxX - bounds.minX)
+  const height = Math.max(1, bounds.maxY - bounds.minY)
+  const centerX = (bounds.minX + bounds.maxX) / 2
+  const centerY = (bounds.minY + bounds.maxY) / 2
+  const padding = 50
+  const scale = Math.max(
+    0.35,
+    Math.min(4.5, Math.min((svgWidth - padding * 2) / width, (svgHeight - padding * 2) / height))
+  )
+  return d3.zoomIdentity.translate(svgWidth / 2 - centerX * scale, svgHeight / 2 - centerY * scale).scale(scale)
+}
+
+function resetView() {
+  dimNonPathBranches.value = false
+  if (!treeSvg.value || !zoomBehavior.value) return
+  d3.select(treeSvg.value).transition().duration(280).call(zoomBehavior.value.transform, defaultTransform.value)
+}
+
+function focusActivePath() {
+  if (!treeSvg.value || !zoomBehavior.value || !latestVisibleLayout.value.length) return
+  const highlighted = latestVisibleLayout.value.filter((node) => highlightedNodeIdsForView.value.has(node.id))
+  if (!highlighted.length) return
+  dimNonPathBranches.value = true
+
+  const minX = d3.min(highlighted, (node) => node.x) ?? 0
+  const maxX = d3.max(highlighted, (node) => node.x) ?? 0
+  const minY = d3.min(highlighted, (node) => node.y) ?? 0
+  const maxY = d3.max(highlighted, (node) => node.y) ?? 0
+  const svgWidth = treeViewport.value?.clientWidth ?? 980
+  const svgHeight = 560
+  const focusBounds = { minX: minX - 65, maxX: maxX + 65, minY: minY - 65, maxY: maxY + 65 }
+  const transform = fitTransform(focusBounds, svgWidth, svgHeight)
+  d3.select(treeSvg.value).transition().duration(320).call(zoomBehavior.value.transform, transform)
 }
 
 function drawBars() {
@@ -431,6 +584,10 @@ function formatFixed(value, digits = 3) {
       <p>Prediction is for the selected match context (focal player vs opponent), not a general player rating.</p>
     </div>
     <h3>Collapsible tree (full model structure + active path)</h3>
+    <div class="tree-actions">
+      <button type="button" class="secondary" @click="focusActivePath">Focus Active Path</button>
+      <button type="button" @click="resetView">Reset view</button>
+    </div>
     <div ref="treeViewport" class="tree-scroll-wrap">
       <svg ref="treeSvg" class="chart chart-tree"></svg>
     </div>
