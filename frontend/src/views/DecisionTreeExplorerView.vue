@@ -558,7 +558,10 @@ function drawTree() {
     .append('circle')
     .attr('r', 7)
     .attr('fill', (d) => {
-      if (d.data.isLeaf && d.data.leafPrediction != null) return d.data.leafPrediction === 1 ? '#16a34a' : '#dc2626'
+      const depthLimitedLeaf = d.depth >= depthLimit && (d.children?.length ?? 0) > 0
+      if ((d.data.isLeaf || depthLimitedLeaf) && d.data.leafPrediction != null) {
+        return d.data.leafPrediction === 1 ? '#16a34a' : '#dc2626'
+      }
       if (String(d.data.id) === String(focusedNodeId.value)) return '#22c55e'
       if (highlightedNodeIds.has(String(d.data.id))) return '#fdba74'
       return collapsed.value.has(d.data.id) ? '#dc2626' : '#2563eb'
