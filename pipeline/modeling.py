@@ -80,9 +80,23 @@ def _connect(sqlite_path: Path) -> sqlite3.Connection:
 def _feature_columns(conn: sqlite3.Connection, table: str) -> List[str]:
     rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
     names = [str(row[1]) for row in rows]
-    leaked_present = sorted(col for col in names if col in LEAKED_COLUMNS)
+
+    def is_leaked_column(col: str) -> bool:
+        if col in LEAKED_COLUMNS:
+            return True
+        if col.startswith("opponent_") and col[len("opponent_") :] in LEAKED_COLUMNS:
+            return True
+        if col.endswith("_diff"):
+            base = col[: -len("_diff")]
+            if base in LEAKED_COLUMNS:
+                return True
+            if base.startswith("opponent_") and base[len("opponent_") :] in LEAKED_COLUMNS:
+                return True
+        return False
+
+    leaked_present = sorted(col for col in names if is_leaked_column(col))
     filtered = [
-        c for c in names if c not in ID_COLUMNS and c != TARGET_COLUMN and c not in LEAKED_COLUMNS
+        c for c in names if c not in ID_COLUMNS and c != TARGET_COLUMN and not is_leaked_column(c)
     ]
     if leaked_present:
         print(
