@@ -722,7 +722,7 @@ function drawBars() {
     .attr('text-anchor', 'middle')
     .style('font-size', '12px')
     .style('fill', '#334155')
-    .text('Importance score')
+    .text('Cumulative split-margin contribution (Σ|feature value − split threshold| on active path)')
 
   svg
     .append('g')
