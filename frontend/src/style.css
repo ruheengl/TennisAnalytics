@@ -108,6 +108,22 @@ button.secondary {
   min-height: 220px;
 }
 
+.tree-scroll-wrap {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+  padding: 0.45rem 0.25rem 0.35rem;
+}
+
+.chart-tree {
+  width: auto;
+  min-width: 100%;
+  min-height: 480px;
+}
+
 .chart.compact {
   min-height: 100px;
 }

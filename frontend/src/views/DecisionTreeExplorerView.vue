@@ -11,6 +11,7 @@ const props = defineProps({
 const selectedPlayer = ref('')
 const selectedMatchKey = ref('')
 const treeSvg = ref()
+const treeViewport = ref()
 const barSvg = ref()
 const collapsed = ref(new Set())
 const explanation = ref(null)
@@ -243,8 +244,25 @@ function drawTree() {
   if (!treeRoot) return
 
   const fullRoot = d3.hierarchy(treeRoot)
+  fullRoot.eachAfter((node) => {
+    const children = node.children ?? []
+    const leafCount = children.length ? d3.sum(children, (child) => child.data._leafCount ?? 1) : 1
+    node.data._leafCount = leafCount
+    node.data._labelLength = String(node.data.name ?? '').length
+  })
   const highlightedNodeIds = activePathIds(treeRoot)
-  d3.tree().nodeSize([180, 70])(fullRoot)
+  const maxLabelLength = d3.max(fullRoot.descendants(), (node) => node.data._labelLength ?? 0) ?? 0
+  const siblingSpacingBase = 105 + Math.min(90, maxLabelLength * 1.2)
+  const depthSpacing = 160
+  d3.tree()
+    .nodeSize([siblingSpacingBase, depthSpacing])
+    .separation((a, b) => {
+      const aLeafWeight = Math.min(2.6, Math.sqrt(a.data._leafCount ?? 1))
+      const bLeafWeight = Math.min(2.6, Math.sqrt(b.data._leafCount ?? 1))
+      const labelFactor = ((a.data._labelLength ?? 0) + (b.data._labelLength ?? 0)) / 50
+      const familyWeight = a.parent === b.parent ? 1 : 1.55
+      return familyWeight * (0.72 + labelFactor) * ((aLeafWeight + bLeafWeight) / 2)
+    })(fullRoot)
 
   const hiddenIds = collapsed.value
   const visibleNodes = fullRoot.descendants().filter(
@@ -263,12 +281,13 @@ function drawTree() {
   const minX = d3.min(visibleNodes, (node) => node.x) ?? 0
   const maxX = d3.max(visibleNodes, (node) => node.x) ?? 0
   const maxY = d3.max(visibleNodes, (node) => node.y) ?? 0
-  const width = Math.max(900, maxX - minX + 180)
-  const height = Math.max(320, maxY + 120)
-  const offsetX = 90 - minX
-  const offsetY = 30
+  const maxDepth = d3.max(visibleNodes, (node) => node.depth) ?? 0
+  const width = Math.max(1500, maxX - minX + 260)
+  const height = Math.max(480, (maxDepth + 1) * (depthSpacing + 18))
+  const offsetX = 130 - minX
+  const offsetY = 38
 
-  svg.attr('viewBox', `0 0 ${width} ${height}`)
+  svg.attr('viewBox', `0 0 ${width} ${height}`).attr('width', width).attr('height', height)
 
   const graph = svg.append('g').attr('transform', `translate(${offsetX},${offsetY})`)
 
@@ -315,10 +334,22 @@ function drawTree() {
     .attr('stroke-width', (d) => (highlightedNodeIds.has(String(d.data.id)) ? 2.5 : 1))
   nodes
     .append('text')
-    .attr('dy', -10)
+    .attr('dy', -12)
     .attr('text-anchor', 'middle')
-    .style('font-size', '11px')
+    .style('font-size', '12.5px')
+    .style('font-weight', (d) => (d.data.isLeaf ? 600 : 500))
     .text((d) => d.data.name)
+
+  if (treeViewport.value && visibleNodes.length) {
+    const activeNodes = visibleNodes.filter((node) => highlightedNodeIds.has(String(node.data.id)))
+    const focusNodes = activeNodes.length ? activeNodes : visibleNodes.filter((node) => node.depth <= 2)
+    const focusMinX = d3.min(focusNodes, (node) => node.x + offsetX) ?? 0
+    const focusMaxX = d3.max(focusNodes, (node) => node.x + offsetX) ?? width
+    const viewport = treeViewport.value
+    const centerX = (focusMinX + focusMaxX) / 2
+    const nextScrollLeft = Math.max(0, centerX - viewport.clientWidth / 2)
+    viewport.scrollTo({ left: nextScrollLeft, behavior: 'auto' })
+  }
 }
 
 function drawBars() {
@@ -400,7 +431,9 @@ function formatFixed(value, digits = 3) {
       <p>Prediction is for the selected match context (focal player vs opponent), not a general player rating.</p>
     </div>
     <h3>Collapsible tree (full model structure + active path)</h3>
-    <svg ref="treeSvg" class="chart"></svg>
+    <div ref="treeViewport" class="tree-scroll-wrap">
+      <svg ref="treeSvg" class="chart chart-tree"></svg>
+    </div>
     <div v-if="pathSummary" class="path-summary">
       <h3>Selected match-context path summary</h3>
       <p>
