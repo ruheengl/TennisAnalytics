@@ -498,12 +498,23 @@ def predict_match_outcome(req: PredictRequest) -> Dict[str, Any]:
 
 @router.get("/health")
 def health() -> Dict[str, Any]:
+    default_attributes = list(DEFAULT_FEATURES)
+    if SQLITE_PATH.exists():
+        try:
+            with connect() as conn:
+                valid_cols = table_columns(conn)
+            filtered_defaults = [col for col in DEFAULT_FEATURES if col in valid_cols]
+            if filtered_defaults:
+                default_attributes = filtered_defaults
+        except Exception:
+            default_attributes = list(DEFAULT_FEATURES)
+
     return {
         "ok": SQLITE_PATH.exists(),
         "sqlite_path": str(SQLITE_PATH),
         "model_artifact_path": str(MODEL_ARTIFACT_PATH),
         "model_artifact_exists": MODEL_ARTIFACT_PATH.exists(),
         "cache_size": len(cluster_cache),
-        "default_attributes": DEFAULT_FEATURES,
+        "default_attributes": default_attributes,
         "predict_feature_columns": _predict_feature_columns(),
     }

@@ -39,6 +39,20 @@ LEAKED_COLUMNS = {
 DEFAULT_MODEL_DIR = Path("data/models")
 
 
+def is_leaked_feature_column(col: str) -> bool:
+    if col in LEAKED_COLUMNS:
+        return True
+    if col.startswith("opponent_") and col[len("opponent_") :] in LEAKED_COLUMNS:
+        return True
+    if col.endswith("_diff"):
+        base = col[: -len("_diff")]
+        if base in LEAKED_COLUMNS:
+            return True
+        if base.startswith("opponent_") and base[len("opponent_") :] in LEAKED_COLUMNS:
+            return True
+    return False
+
+
 @dataclass
 class Dataset:
     feature_columns: List[str]
@@ -81,29 +95,17 @@ def _feature_columns(conn: sqlite3.Connection, table: str) -> List[str]:
     rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
     names = [str(row[1]) for row in rows]
 
-    def is_leaked_column(col: str) -> bool:
-        if col in LEAKED_COLUMNS:
-            return True
-        if col.startswith("opponent_") and col[len("opponent_") :] in LEAKED_COLUMNS:
-            return True
-        if col.endswith("_diff"):
-            base = col[: -len("_diff")]
-            if base in LEAKED_COLUMNS:
-                return True
-            if base.startswith("opponent_") and base[len("opponent_") :] in LEAKED_COLUMNS:
-                return True
-        return False
-
-    leaked_present = sorted(col for col in names if is_leaked_column(col))
-    filtered = [
-        c for c in names if c not in ID_COLUMNS and c != TARGET_COLUMN and not is_leaked_column(c)
-    ]
+    leaked_present = sorted(col for col in names if is_leaked_feature_column(col))
+    filtered = [c for c in names if c not in ID_COLUMNS and c != TARGET_COLUMN and not is_leaked_feature_column(c)]
     if leaked_present:
         print(
             "Warning: leaked post-match columns detected and excluded from training features: "
             + ", ".join(leaked_present),
             file=sys.stderr,
         )
+    still_leaked = [c for c in filtered if is_leaked_feature_column(c)]
+    if still_leaked:
+        raise SystemExit(f"Bug: leaked columns were not removed from training features: {still_leaked}")
     return filtered
 
 

@@ -293,6 +293,16 @@ def compute_features(
                 "opponent_career_win_pct": (
                     opponent_state.career_wins / opponent_state.career_matches if opponent_state.career_matches else None
                 ),
+                "service_points_won_pct": obs.service_points_won_pct,
+                "return_points_won_pct": obs.return_points_won_pct,
+                "aces_per_service_game": obs.aces_per_service_game,
+                "double_faults_per_service_game": obs.double_faults_per_service_game,
+                "break_points_saved_pct": obs.break_points_saved_pct,
+                "opponent_service_points_won_pct": opponent_obs.service_points_won_pct,
+                "opponent_return_points_won_pct": opponent_obs.return_points_won_pct,
+                "opponent_aces_per_service_game": opponent_obs.aces_per_service_game,
+                "opponent_double_faults_per_service_game": opponent_obs.double_faults_per_service_game,
+                "opponent_break_points_saved_pct": opponent_obs.break_points_saved_pct,
             }
             add_rolling_features(row, state, obs.match_date, obs.surface)
             add_rolling_features(row, opponent_state, obs.match_date, obs.surface, prefix="opponent_")
