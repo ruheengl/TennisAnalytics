@@ -177,7 +177,7 @@ const selectedPlayerTrendSummary = computed(() => {
   if (!playerRows.length) {
     return {
       playerName: 'No player selected',
-      trendHints: 'Select a player to inspect Elo, win%, and aces per service game trends.'
+      trendHints: 'Select a player to inspect Elo, win%, and ace percentage trends.'
     }
   }
 

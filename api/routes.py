@@ -341,7 +341,7 @@ def query_players(req: PlayerQueryRequest) -> Dict[str, Any]:
 @router.get("/players/{player_id}/metrics/timeseries")
 def player_metric_timeseries(
     player_id: str,
-    metric: Literal["elo", "aces_per_service_game", "break_points_won_pct", "win_pct"] = Query(...),
+    metric: Literal["elo", "ace_pct", "aces_per_service_game", "break_points_won_pct", "win_pct"] = Query(...),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     limit: int = Query(500, ge=10, le=5000),
@@ -389,7 +389,7 @@ def player_metric_timeseries(
 @router.get("/players/{player_id}/metrics/degradation")
 def player_metric_degradation(
     player_id: str,
-    metric: Literal["elo", "aces_per_service_game", "break_points_won_pct", "win_pct"] = Query(...),
+    metric: Literal["elo", "ace_pct", "aces_per_service_game", "break_points_won_pct", "win_pct"] = Query(...),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     limit: int = Query(500, ge=10, le=5000),
