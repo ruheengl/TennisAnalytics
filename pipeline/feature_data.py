@@ -22,6 +22,7 @@ class PlayerMatchObservation:
     service_points_won_pct: Optional[float]
     return_points_won_pct: Optional[float]
     aces_per_service_game: Optional[float]
+    ace_pct: Optional[float]
     double_faults_per_service_game: Optional[float]
     break_points_saved_pct: Optional[float]
 
@@ -200,6 +201,10 @@ def extract_observations_from_file(
                 )
                 aces = parse_float(row.get(f"{side}.Sets[0].Stats.ServiceStats.Aces.Number"))
                 dfs = parse_float(row.get(f"{side}.Sets[0].Stats.ServiceStats.DoubleFaults.Number"))
+                total_service_points = parse_float(
+                    row.get(f"{side}.Sets[0].Stats.PointStats.TotalServicePointsWon.Divisor")
+                )
+                ace_pct = safe_ratio(aces, total_service_points)
 
                 observations.append(
                     PlayerMatchObservation(
@@ -217,6 +222,7 @@ def extract_observations_from_file(
                             row.get(f"{side}.Sets[0].Stats.PointStats.TotalReturnPointsWon.Percent")
                         ),
                         aces_per_service_game=safe_ratio(aces, service_games),
+                        ace_pct=(ace_pct * 100.0 if ace_pct is not None else None),
                         double_faults_per_service_game=safe_ratio(dfs, service_games),
                         break_points_saved_pct=parse_float(
                             row.get(f"{side}.Sets[0].Stats.ServiceStats.BreakPointsSaved.Percent")
