@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { apiGet, apiPost } from './services/api'
 import ClusterOverviewView from './views/ClusterOverviewView.vue'
 import PlayerPerformanceView from './views/PlayerPerformanceView.vue'
@@ -25,6 +25,8 @@ const selectedClusterId = ref('all')
 const selectedPlayerId = ref('')
 const selectedMatchKey = ref('')
 const playerTrendsPanelOpen = ref(false)
+const predictionPanelOpen = ref(false)
+const predictionPanelRef = ref(null)
 const activeStoryStep = ref('overview')
 const clusterRequestId = ref('')
 const explainerContext = ref({
@@ -202,6 +204,9 @@ onMounted(loadInitialState)
 
 watch(activeTab, (nextTab) => {
   activeStoryStep.value = nextTab
+  if (nextTab === 'tree') {
+    predictionPanelOpen.value = true
+  }
 })
 
 watch(
@@ -384,6 +389,16 @@ function applyMatchContextSelection(payload) {
   selectedMatchKey.value = nextMatchKey
   activeStoryStep.value = 'tree'
   activeTab.value = 'tree'
+  openPredictionPanelAndScroll()
+}
+
+async function openPredictionPanelAndScroll() {
+  predictionPanelOpen.value = true
+  await nextTick()
+  predictionPanelRef.value?.scrollIntoView({
+    behavior: 'smooth',
+    block: 'start'
+  })
 }
 
 function reconcileStoryStateAfterClustering() {
@@ -613,7 +628,12 @@ function reconcileStoryStateAfterClustering() {
         />
       </details>
 
-      <details class="panel" :open="activeTab === 'tree'">
+      <details
+        ref="predictionPanelRef"
+        class="panel"
+        :open="predictionPanelOpen"
+        @toggle="predictionPanelOpen = $event.target.open"
+      >
         <summary><strong>Match Outcome Explainer</strong></summary>
         <DecisionTreeExplorerView
           :players="enrichedPlayers"

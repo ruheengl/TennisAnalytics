@@ -238,6 +238,17 @@ function drawBrush() {
 <template>
   <section class="panel">
     <h2 v-if="!embedded">Player performance (multi-metric time series)</h2>
+    <div class="trend-header">
+      <h3>Trend context</h3>
+      <button
+        v-if="selectedMatchRow && selectedMatchKey"
+        type="button"
+        @click="continueToMatchExplanation"
+      >
+        View predicted outcomes &amp; explanation
+      </button>
+    </div>
+
     <div class="filters">
       <label v-if="!embedded">
         Player
@@ -262,13 +273,6 @@ function drawBrush() {
         Use brush date window ({{ selectedWindowLabel }})
       </label>
 
-      <button
-        type="button"
-        :disabled="!selectedPlayer || !selectedMatchKey"
-        @click="continueToMatchExplanation"
-      >
-        Continue to match explanation
-      </button>
     </div>
 
     <p v-if="error" class="error-text">{{ error }}</p>
