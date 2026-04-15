@@ -25,6 +25,7 @@ def normalize_payload(payload: ClusterRequest) -> Dict[str, Any]:
         "max_iter": int(payload.max_iter),
         "seed": int(payload.seed),
         "filters": {k: payload.filters[k] for k in sorted(payload.filters)},
+        "player_limit": int(payload.player_limit) if payload.player_limit is not None else None,
     }
 
 
@@ -356,8 +357,12 @@ def load_cluster(req: ClusterRequest) -> ClusterCacheEntry:
 
         where_sql, params = build_where(normalized["filters"], valid_cols)
         cols = ', '.join(f'"{c}"' for c in normalized["attributes"])
-        query = f"SELECT player_id, {cols} FROM player_features{where_sql}"
-        rows = conn.execute(query, params).fetchall()
+        query = f"SELECT player_id, {cols} FROM player_features{where_sql} ORDER BY player_id"
+        query_params = list(params)
+        if normalized["player_limit"] is not None:
+            query += " LIMIT ?"
+            query_params.append(int(normalized["player_limit"]))
+        rows = conn.execute(query, query_params).fetchall()
 
     player_ids, matrix = rows_to_matrix(rows, normalized["attributes"])
     scaled = scale_matrix(matrix, normalized["scaling"])
