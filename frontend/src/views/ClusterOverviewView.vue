@@ -35,6 +35,24 @@ const selectedPlayer = computed({
   set: (value) => emit('update:selectedPlayerId', value)
 })
 
+const playerSearchTerm = ref('')
+const searchError = ref('')
+
+const playerLookup = computed(() =>
+  props.players.map((player) => ({
+    id: String(player.player_id),
+    name: player.player_name || String(player.player_id),
+    cluster: String(player.cluster_id)
+  }))
+)
+
+const playerSearchOptions = computed(() =>
+  playerLookup.value
+    .map((player) => player.name)
+    .filter((name, index, names) => names.indexOf(name) === index)
+    .sort((a, b) => a.localeCompare(b))
+)
+
 const playerOptions = computed(() =>
   filtered.value.map((player) => ({
     id: String(player.player_id),
@@ -61,6 +79,25 @@ const summaries = computed(() => {
 
   return grouped.map(([cluster, values]) => ({ cluster, ...values }))
 })
+
+function highlightPlayerByName() {
+  searchError.value = ''
+  const query = playerSearchTerm.value.trim().toLowerCase()
+  if (!query) return
+
+  const exact = playerLookup.value.find((player) => player.name.toLowerCase() === query)
+  const partial = playerLookup.value.find((player) => player.name.toLowerCase().includes(query))
+  const match = exact ?? partial
+
+  if (!match) {
+    searchError.value = 'No matching player found in this run.'
+    return
+  }
+
+  selectedCluster.value = match.cluster
+  selectedPlayer.value = match.id
+  playerSearchTerm.value = match.name
+}
 
 function formatLoading(item) {
   const sign = item.loading >= 0 ? '+' : '-'
@@ -174,6 +211,12 @@ watch(
   },
   { immediate: true }
 )
+
+watch(selectedPlayer, (playerId) => {
+  if (!playerId) return
+  const current = playerLookup.value.find((player) => player.id === playerId)
+  if (current) playerSearchTerm.value = current.name
+})
 </script>
 
 <template>
@@ -201,6 +244,23 @@ watch(
         </option>
       </select>
     </label>
+
+    <form class="inline-filter" @submit.prevent="highlightPlayerByName">
+      <label>
+        Find player by name
+        <input
+          v-model="playerSearchTerm"
+          type="search"
+          list="cluster-player-names"
+          placeholder="Type a player name"
+        />
+      </label>
+      <datalist id="cluster-player-names">
+        <option v-for="name in playerSearchOptions" :key="name" :value="name"></option>
+      </datalist>
+      <button type="submit">Highlight player</button>
+      <p v-if="searchError" class="error-text">{{ searchError }}</p>
+    </form>
 
     <svg ref="svgRef" class="chart"></svg>
 
