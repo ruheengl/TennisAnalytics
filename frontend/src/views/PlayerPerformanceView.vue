@@ -60,6 +60,13 @@ const matchOptions = computed(() =>
 const selectedMatchRow = computed(() =>
   effectiveMatchRows.value.find((row) => matchKeyForRow(row) === selectedMatchKey.value) ?? null
 )
+
+const normalizeToPercent = (value) => {
+  const numeric = Number(value ?? 0)
+  if (!Number.isFinite(numeric)) return 0
+  return numeric <= 1 ? numeric * 100 : numeric
+}
+
 const selectedWindowLabel = computed(() => {
   if (!hasBrushWindow.value) return 'full timeline'
   const [start, end] = domain.value
@@ -128,12 +135,12 @@ async function loadSeries() {
     }
     for (const point of ace.points) {
       const rec = map.get(point.match_date) ?? { date: new Date(point.match_date), elo: null, ace: null, win: null }
-      rec.ace = Number(point.value ?? 0)
+      rec.ace = normalizeToPercent(point.value)
       map.set(point.match_date, rec)
     }
     for (const point of win.points) {
       const rec = map.get(point.match_date) ?? { date: new Date(point.match_date), elo: null, ace: null, win: null }
-      rec.win = Number(point.value ?? 0)
+      rec.win = normalizeToPercent(point.value)
       map.set(point.match_date, rec)
     }
 
