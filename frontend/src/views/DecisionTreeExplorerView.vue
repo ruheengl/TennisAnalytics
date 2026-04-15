@@ -11,7 +11,7 @@ const props = defineProps({
   activeStoryStep: { type: String, default: 'overview' },
   clusterRequestId: { type: String, default: '' }
 })
-const emit = defineEmits(['update:selectedPlayerId', 'update:selectedMatchKey', 'update:activeStoryStep'])
+const emit = defineEmits(['update:selectedPlayerId', 'update:selectedMatchKey', 'update:activeStoryStep', 'update:prediction-context'])
 
 const selectedPlayer = computed({
   get: () => props.selectedPlayerId,
@@ -97,6 +97,24 @@ const fullExpansionBlocked = computed(() => isLargeTree.value && !largeTreeOverr
 const activeMatchNodeId = computed(() =>
   matchedFeatureNodeIds.value.length ? matchedFeatureNodeIds.value[activeMatchIndex.value] : null
 )
+
+
+function emitPredictionContext() {
+  const row = selectedMatchRow.value
+  if (!row) {
+    emit('update:prediction-context', {
+      matchLabel: 'No match selected',
+      winProbability: null
+    })
+    return
+  }
+
+  const matchLabel = `${row.match_date ?? '-'} vs ${row.opponent_name ?? displayPlayerName(row.opponent_id) ?? '-'}`
+  emit('update:prediction-context', {
+    matchLabel,
+    winProbability: predictionResponse.value?.win_probability ?? null
+  })
+}
 const contextPanel = computed(() => {
   const row = selectedMatchRow.value
   if (!row) return null
@@ -146,6 +164,13 @@ watch(
   { immediate: true }
 )
 watch(selectedMatchKey, loadPrediction)
+watch(
+  [selectedMatchRow, predictionResponse],
+  () => {
+    emitPredictionContext()
+  },
+  { immediate: true }
+)
 watch(
   canRequestPrediction,
   (available) => {

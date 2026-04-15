@@ -4,6 +4,7 @@ import { apiGet, apiPost } from './services/api'
 import ClusterOverviewView from './views/ClusterOverviewView.vue'
 import PlayerPerformanceView from './views/PlayerPerformanceView.vue'
 import DecisionTreeExplorerView from './views/DecisionTreeExplorerView.vue'
+import StoryStepper from './components/StoryStepper.vue'
 
 const tabs = [
   { key: 'overview', label: 'Cluster Overview' },
@@ -25,6 +26,10 @@ const selectedPlayerId = ref('')
 const selectedMatchKey = ref('')
 const activeStoryStep = ref('overview')
 const clusterRequestId = ref('')
+const explainerContext = ref({
+  matchLabel: 'No match selected',
+  winProbability: null
+})
 
 const selectedAttributes = ref([])
 const configMode = ref('simple')
@@ -136,6 +141,55 @@ const enrichedPlayers = computed(() => {
       pc1: Number(projectionByPlayer[row.player_id]?.pc1 ?? 0),
       pc2: Number(projectionByPlayer[row.player_id]?.pc2 ?? 0)
     }))
+})
+
+
+const selectedClusterSummary = computed(() => {
+  const players = enrichedPlayers.value
+  if (!players.length) {
+    return {
+      clusterLabel: 'All clusters',
+      summary: 'Run clustering to generate player archetypes.'
+    }
+  }
+
+  const selectedId = selectedClusterId.value
+  const selectedPlayers =
+    selectedId === 'all' ? players : players.filter((player) => player.cluster_id === Number(selectedId))
+
+  const avgWinPct =
+    selectedPlayers.length
+      ? selectedPlayers.reduce((sum, row) => sum + Number(row.career_win_pct ?? 0), 0) / selectedPlayers.length
+      : 0
+
+  return {
+    clusterLabel: selectedId === 'all' ? 'All clusters' : `Cluster ${selectedId}`,
+    summary: `${selectedPlayers.length} players, avg career win ${(avgWinPct * 100).toFixed(1)}%.`
+  }
+})
+
+const selectedPlayerTrendSummary = computed(() => {
+  const playerRows = enrichedPlayers.value.filter((player) => player.player_id === selectedPlayerId.value)
+
+  if (!playerRows.length) {
+    return {
+      playerName: 'No player selected',
+      trendHints: 'Select a player to inspect Elo, win%, and ace% trends.'
+    }
+  }
+
+  const playerName = playerRows[0].player_name ?? playerRows[0].player_id
+  const chronological = [...playerRows].sort((a, b) => String(a.match_date ?? '').localeCompare(String(b.match_date ?? '')))
+  const first = chronological[0]
+  const last = chronological[chronological.length - 1]
+  const eloDelta = Number(last.elo_pre ?? 0) - Number(first.elo_pre ?? 0)
+  const trendWord = eloDelta > 5 ? 'upward' : eloDelta < -5 ? 'downward' : 'stable'
+  const recentWinPct = Number(last.career_win_pct ?? 0) * 100
+
+  return {
+    playerName,
+    trendHints: `Elo ${trendWord} (${eloDelta >= 0 ? '+' : ''}${eloDelta.toFixed(1)}), latest career win ${recentWinPct.toFixed(1)}%.`
+  }
 })
 
 onMounted(loadInitialState)
@@ -277,6 +331,16 @@ async function runClustering() {
 }
 
 
+
+
+function applyExplainerContext(payload) {
+  if (!payload || typeof payload !== 'object') return
+  explainerContext.value = {
+    matchLabel: payload.matchLabel ?? 'No match selected',
+    winProbability: payload.winProbability ?? null
+  }
+}
+
 function applyMatchContextSelection(payload) {
   if (!payload || typeof payload !== 'object') return
 
@@ -313,6 +377,7 @@ function reconcileStoryStateAfterClustering() {
   if (!validPlayerIds.includes(selectedPlayerId.value)) {
     selectedPlayerId.value = validPlayerIds[0] ?? ''
     selectedMatchKey.value = ''
+    explainerContext.value = { matchLabel: 'No match selected', winProbability: null }
   }
 }
 </script>
@@ -456,6 +521,16 @@ function reconcileStoryStateAfterClustering() {
       </p>
     </section>
 
+    <StoryStepper
+      :active-story-step="activeStoryStep"
+      :active-tab="activeTab"
+      :overview-context="selectedClusterSummary"
+      :performance-context="selectedPlayerTrendSummary"
+      :explainer-context="explainerContext"
+      @update:active-story-step="activeStoryStep = $event"
+      @update:active-tab="activeTab = $event"
+    />
+
     <nav class="tabs panel">
       <button
         v-for="tab in tabs"
@@ -510,6 +585,7 @@ function reconcileStoryStateAfterClustering() {
       @update:selected-player-id="selectedPlayerId = $event"
       @update:selected-match-key="selectedMatchKey = $event"
       @update:active-story-step="activeStoryStep = $event"
+      @update:prediction-context="applyExplainerContext"
     />
   </main>
 </template>
