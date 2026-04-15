@@ -33,6 +33,7 @@ LEAKED_COLUMNS = {
     "service_points_won_pct",
     "return_points_won_pct",
     "aces_per_service_game",
+    "ace_pct",
     "double_faults_per_service_game",
     "break_points_saved_pct",
 }

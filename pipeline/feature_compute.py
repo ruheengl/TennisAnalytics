@@ -19,6 +19,7 @@ class HistoryEntry:
     elo_pre: float
     service_points_won_pct: Optional[float]
     return_points_won_pct: Optional[float]
+    ace_pct: Optional[float]
 
 
 def linear_slope(values: Sequence[float]) -> Optional[float]:
@@ -44,6 +45,8 @@ class MatchWindowState:
     service_count: int = 0
     return_sum: float = 0.0
     return_count: int = 0
+    ace_pct_sum: float = 0.0
+    ace_pct_count: int = 0
     elo_sum: float = 0.0
     elo_xy_sum: float = 0.0
     win_indicator_sum: float = 0.0
@@ -67,6 +70,9 @@ class MatchWindowState:
         if entry.return_points_won_pct is not None:
             self.return_sum += entry.return_points_won_pct
             self.return_count += 1
+        if entry.ace_pct is not None:
+            self.ace_pct_sum += entry.ace_pct
+            self.ace_pct_count += 1
 
     def _evict_oldest(self) -> None:
         if not self.entries:
@@ -85,6 +91,9 @@ class MatchWindowState:
         if oldest.return_points_won_pct is not None:
             self.return_sum -= oldest.return_points_won_pct
             self.return_count -= 1
+        if oldest.ace_pct is not None:
+            self.ace_pct_sum -= oldest.ace_pct
+            self.ace_pct_count -= 1
 
     def win_pct(self) -> Optional[float]:
         if not self.entries:
@@ -106,6 +115,10 @@ class MatchWindowState:
             if self.return_count == 0:
                 return None
             return self.return_sum / float(self.return_count)
+        if attr == "ace_pct":
+            if self.ace_pct_count == 0:
+                return None
+            return self.ace_pct_sum / float(self.ace_pct_count)
         values = [getattr(e, attr) for e in self.entries if getattr(e, attr) is not None]
         if not values:
             return None
@@ -233,6 +246,7 @@ def compute_features(
             row[f"{prefix}win_pct_slope_last_{n}_matches"] = recent.win_pct_slope()
             row[f"{prefix}srv_points_won_last_{n}_matches"] = recent.average_metric("service_points_won_pct")
             row[f"{prefix}ret_points_won_last_{n}_matches"] = recent.average_metric("return_points_won_pct")
+            row[f"{prefix}ace_pct_last_{n}_matches"] = recent.average_metric("ace_pct")
             row[f"{prefix}surface_win_pct_last_{n}_matches"] = recent_surface.win_pct()
 
         for d in day_windows:
@@ -296,11 +310,13 @@ def compute_features(
                 "service_points_won_pct": obs.service_points_won_pct,
                 "return_points_won_pct": obs.return_points_won_pct,
                 "aces_per_service_game": obs.aces_per_service_game,
+                "ace_pct": obs.ace_pct,
                 "double_faults_per_service_game": obs.double_faults_per_service_game,
                 "break_points_saved_pct": obs.break_points_saved_pct,
                 "opponent_service_points_won_pct": opponent_obs.service_points_won_pct,
                 "opponent_return_points_won_pct": opponent_obs.return_points_won_pct,
                 "opponent_aces_per_service_game": opponent_obs.aces_per_service_game,
+                "opponent_ace_pct": opponent_obs.ace_pct,
                 "opponent_double_faults_per_service_game": opponent_obs.double_faults_per_service_game,
                 "opponent_break_points_saved_pct": opponent_obs.break_points_saved_pct,
             }
@@ -325,6 +341,7 @@ def compute_features(
                     elo_pre=pre_elos[obs.player_id],
                     service_points_won_pct=obs.service_points_won_pct,
                     return_points_won_pct=obs.return_points_won_pct,
+                    ace_pct=obs.ace_pct,
                 ),
             )
 

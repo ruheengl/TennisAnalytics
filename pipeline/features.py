@@ -86,6 +86,8 @@ def generate_column_docs(rows: Sequence[Dict[str, object]], path: Path) -> None:
         "opponent_srv_points_won_last_": "Opponent average service points won percent over trailing N matches.",
         "ret_points_won_last_": "Average return points won percent over trailing N matches.",
         "opponent_ret_points_won_last_": "Opponent average return points won percent over trailing N matches.",
+        "ace_pct_last_": "Average ace percentage (aces / total service points * 100) over trailing N matches.",
+        "opponent_ace_pct_last_": "Opponent average ace percentage (aces / total service points * 100) over trailing N matches.",
         "surface_win_pct_last_": "Win percentage for same-surface matches in trailing window.",
         "opponent_surface_win_pct_last_": "Opponent win percentage for same-surface matches in trailing window.",
         "matches_last_": "Number of matches played during trailing day window.",
