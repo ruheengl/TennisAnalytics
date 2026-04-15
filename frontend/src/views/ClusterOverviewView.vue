@@ -9,10 +9,15 @@ const props = defineProps({
   clusteringConfig: { type: Object, required: true },
   projectionMetadata: { type: Object, required: true },
   selectedClusterId: { type: String, required: true },
+  selectedPlayerId: { type: String, default: '' },
   activeStoryStep: { type: String, default: 'overview' },
   clusterRequestId: { type: String, default: '' }
 })
-const emit = defineEmits(['update:selectedClusterId', 'update:activeStoryStep'])
+const emit = defineEmits([
+  'update:selectedClusterId',
+  'update:selectedPlayerId',
+  'update:activeStoryStep'
+])
 
 const svgRef = ref()
 const selectedCluster = computed({
@@ -24,6 +29,18 @@ const filtered = computed(() => {
   if (selectedCluster.value === 'all') return props.players
   return props.players.filter((p) => p.cluster_id === Number(selectedCluster.value))
 })
+
+const selectedPlayer = computed({
+  get: () => props.selectedPlayerId,
+  set: (value) => emit('update:selectedPlayerId', value)
+})
+
+const playerOptions = computed(() =>
+  filtered.value.map((player) => ({
+    id: String(player.player_id),
+    label: player.player_name || player.player_id
+  }))
+)
 
 const clusters = computed(() => {
   const labels = [...new Set(props.players.map((p) => p.cluster_id))]
@@ -111,9 +128,15 @@ function drawScatter() {
     .join('circle')
     .attr('cx', (d) => x(Number(d.pc1 ?? 0)))
     .attr('cy', (d) => y(Number(d.pc2 ?? 0)))
-    .attr('r', 4)
+    .attr('r', (d) => (String(d.player_id) === selectedPlayer.value ? 7 : 4))
     .attr('fill', (d) => color(d.cluster_id))
+    .attr('stroke', (d) => (String(d.player_id) === selectedPlayer.value ? '#111827' : 'none'))
+    .attr('stroke-width', (d) => (String(d.player_id) === selectedPlayer.value ? 2 : 0))
     .attr('opacity', 0.8)
+    .style('cursor', 'pointer')
+    .on('click', (_, d) => {
+      selectedPlayer.value = String(d.player_id)
+    })
     .append('title')
     .text((d) => `${d.player_name ?? d.player_id}\nCluster ${d.cluster_id}`)
 
@@ -134,7 +157,23 @@ function drawScatter() {
 }
 
 onMounted(drawScatter)
-watch(filtered, drawScatter)
+watch([filtered, selectedPlayer], drawScatter)
+
+watch(
+  [filtered, selectedPlayer],
+  ([players, currentPlayer]) => {
+    const playerIds = players.map((player) => String(player.player_id))
+    if (!players.length) {
+      if (currentPlayer) selectedPlayer.value = ''
+      return
+    }
+
+    if (!playerIds.includes(currentPlayer)) {
+      selectedPlayer.value = playerIds[0]
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <template>
@@ -150,6 +189,16 @@ watch(filtered, drawScatter)
       <select v-model="selectedCluster">
         <option value="all">All</option>
         <option v-for="cluster in clusters" :key="cluster" :value="String(cluster)">Cluster {{ cluster }}</option>
+      </select>
+    </label>
+
+    <label class="inline-filter">
+      Player
+      <select v-model="selectedPlayer" :disabled="!playerOptions.length">
+        <option v-if="!playerOptions.length" value="">No players available</option>
+        <option v-for="player in playerOptions" :key="player.id" :value="player.id">
+          {{ player.label }}
+        </option>
       </select>
     </label>
 

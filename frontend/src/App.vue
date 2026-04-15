@@ -192,6 +192,11 @@ const selectedPlayerTrendSummary = computed(() => {
   }
 })
 
+const playersInSelectedCluster = computed(() => {
+  if (selectedClusterId.value === 'all') return enrichedPlayers.value
+  return enrichedPlayers.value.filter((player) => player.cluster_id === Number(selectedClusterId.value))
+})
+
 onMounted(loadInitialState)
 
 watch(activeTab, (nextTab) => {
@@ -222,6 +227,27 @@ watch(
     k.value = Number(simpleGroupCount.value)
     maxIter.value = Number(preset.params.maxIter)
     seed.value = Number(preset.params.seed)
+  },
+  { immediate: true }
+)
+
+watch(
+  [selectedClusterId, playersInSelectedCluster],
+  ([, players]) => {
+    const validPlayerIds = players.map((player) => String(player.player_id))
+    if (!validPlayerIds.length) {
+      if (selectedPlayerId.value) {
+        selectedPlayerId.value = ''
+        selectedMatchKey.value = ''
+      }
+      return
+    }
+
+    if (!validPlayerIds.includes(selectedPlayerId.value)) {
+      selectedPlayerId.value = validPlayerIds[0]
+      selectedMatchKey.value = ''
+      explainerContext.value = { matchLabel: 'No match selected', winProbability: null }
+    }
   },
   { immediate: true }
 )
@@ -554,9 +580,11 @@ function reconcileStoryStateAfterClustering() {
         :clustering-config="activeClusteringConfig"
         :projection-metadata="projectionMetadata"
         :selected-cluster-id="selectedClusterId"
+        :selected-player-id="selectedPlayerId"
         :active-story-step="activeStoryStep"
         :cluster-request-id="clusterRequestId"
         @update:selected-cluster-id="selectedClusterId = $event"
+        @update:selected-player-id="selectedPlayerId = $event"
         @update:active-story-step="activeStoryStep = $event"
       />
 
