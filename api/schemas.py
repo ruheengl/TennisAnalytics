@@ -51,7 +51,7 @@ class ThresholdFilter(BaseModel):
 
 class PlayerQueryRequest(BaseModel):
     filters: List[ThresholdFilter]
-    limit: int = Field(100, ge=1, le=2000)
+    limit: int = Field(100, ge=1)
     offset: int = Field(0, ge=0)
     sort_by: Optional[str] = None
     sort_order: Literal["asc", "desc"] = "desc"

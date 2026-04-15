@@ -187,11 +187,11 @@ def cluster_projection(cluster_request_id: str) -> Dict[str, Any]:
 def cluster_players(
     cluster_request_id: str,
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=500),
+    page_size: int = Query(50, ge=1),
     cluster_id: Optional[int] = Query(None),
     min_confidence: Optional[float] = Query(None, ge=0.0, le=1.0),
     similar_to: Optional[str] = Query(None),
-    similar_limit: int = Query(10, ge=1, le=200),
+    similar_limit: int = Query(10, ge=1),
 ) -> Dict[str, Any]:
     entry = cluster_cache.get(cluster_request_id)
     if not entry:
@@ -235,7 +235,7 @@ def search_players(
     q: str = Query(..., min_length=1),
     cluster_request_id: Optional[str] = None,
     cluster_id: Optional[int] = None,
-    limit: int = Query(25, ge=1, le=200),
+    limit: int = Query(25, ge=1),
 ) -> Dict[str, Any]:
     query_text = q.strip().lower()
     if not query_text:
@@ -344,7 +344,7 @@ def player_metric_timeseries(
     metric: Literal["elo", "ace_pct", "aces_per_service_game", "break_points_won_pct", "win_pct"] = Query(...),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
-    limit: int = Query(500, ge=10, le=5000),
+    limit: int = Query(500, ge=10),
     smoothing: Literal["none", "ema", "moving_average"] = Query("ema"),
     smoothing_window: int = Query(5, ge=1, le=200),
     ema_alpha: float = Query(0.35, gt=0.0, le=1.0),
@@ -392,7 +392,7 @@ def player_metric_degradation(
     metric: Literal["elo", "ace_pct", "aces_per_service_game", "break_points_won_pct", "win_pct"] = Query(...),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
-    limit: int = Query(500, ge=10, le=5000),
+    limit: int = Query(500, ge=10),
     smoothing: Literal["none", "ema", "moving_average"] = Query("ema"),
     smoothing_window: int = Query(5, ge=1, le=200),
     ema_alpha: float = Query(0.35, gt=0.0, le=1.0),
