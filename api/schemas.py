@@ -17,6 +17,7 @@ class ClusterRequest(BaseModel):
     max_iter: int = Field(40, ge=5, le=200)
     seed: int = 42
     filters: Dict[str, Any] = Field(default_factory=dict)
+    player_limit: Optional[int] = Field(None, ge=2, le=20000)
 
     @model_validator(mode="after")
     def validate_algorithm_params(self) -> "ClusterRequest":

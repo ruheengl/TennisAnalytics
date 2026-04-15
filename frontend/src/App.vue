@@ -50,6 +50,7 @@ const distanceMetric = ref('euclidean')
 const scaling = ref('zscore')
 const MAX_CLUSTER_PLAYERS_PAGE_SIZE = 4000
 const MAX_PLAYER_QUERY_LIMIT = 4000
+const clusterPlayerLimit = ref(4000)
 
 const simplePresetOptions = {
   balanced: {
@@ -130,25 +131,65 @@ const activeClusteringConfig = computed(() => ({
 
 const canRunClustering = computed(() => selectedAttributes.value.length > 0)
 
+function normalizePlayerId(playerId) {
+  const normalized = String(playerId ?? '').trim()
+  if (/^\d+\.0$/.test(normalized)) {
+    return normalized.slice(0, -2)
+  }
+  return normalized
+}
+
 const enrichedPlayers = computed(() => {
   const projectionPoints = clusterResult.value?.projection?.points ?? []
   const projectionByPlayer = Object.fromEntries(
-    projectionPoints.map((point) => [point.player_id, point])
+    projectionPoints.map((point) => [normalizePlayerId(point.player_id), point])
   )
 
   return playerRows.value
-    .filter((row) => clusterByPlayer.value[row.player_id] !== undefined)
-    .map((row) => ({
-      ...row,
-      cluster_id: clusterByPlayer.value[row.player_id],
-      pc1: Number(projectionByPlayer[row.player_id]?.pc1 ?? 0),
-      pc2: Number(projectionByPlayer[row.player_id]?.pc2 ?? 0)
-    }))
+    .map((row) => {
+      const normalizedPlayerId = normalizePlayerId(row.player_id)
+      const clusterId = clusterByPlayer.value[normalizedPlayerId]
+      if (clusterId === undefined) return null
+
+      return {
+        ...row,
+        player_id: normalizedPlayerId,
+        cluster_id: clusterId,
+        pc1: Number(projectionByPlayer[normalizedPlayerId]?.pc1 ?? 0),
+        pc2: Number(projectionByPlayer[normalizedPlayerId]?.pc2 ?? 0)
+      }
+    })
+    .filter(Boolean)
+})
+
+const overviewPlayers = computed(() => {
+  const projectionPoints = clusterResult.value?.projection?.points ?? []
+  const statsByPlayer = Object.fromEntries(
+    enrichedPlayers.value.map((player) => [normalizePlayerId(player.player_id), player])
+  )
+
+  return projectionPoints
+    .map((point) => {
+      const normalizedPlayerId = normalizePlayerId(point.player_id)
+      const clusterId = clusterByPlayer.value[normalizedPlayerId]
+      if (clusterId === undefined) return null
+
+      const stats = statsByPlayer[normalizedPlayerId]
+      return {
+        ...stats,
+        player_id: normalizedPlayerId,
+        player_name: point.player_name ?? stats?.player_name ?? normalizedPlayerId,
+        cluster_id: clusterId,
+        pc1: Number(point.pc1 ?? 0),
+        pc2: Number(point.pc2 ?? 0)
+      }
+    })
+    .filter(Boolean)
 })
 
 
 const selectedClusterSummary = computed(() => {
-  const players = enrichedPlayers.value
+  const players = overviewPlayers.value
   if (!players.length) {
     return {
       clusterLabel: 'All clusters',
@@ -302,28 +343,33 @@ async function loadInitialState() {
   }
 }
 
-async function fetchClusterPlayers(clusterRequestId) {
+async function fetchClusterPlayers(clusterRequestId, targetLimit = MAX_CLUSTER_PLAYERS_PAGE_SIZE) {
+  const normalizedLimit = Math.max(2, Number(targetLimit) || MAX_CLUSTER_PLAYERS_PAGE_SIZE)
+  const pageSize = Math.min(normalizedLimit, MAX_CLUSTER_PLAYERS_PAGE_SIZE)
+
   const firstPage = await apiGet(`/clusters/${clusterRequestId}/players`, {
     page: 1,
-    page_size: MAX_CLUSTER_PLAYERS_PAGE_SIZE
+    page_size: pageSize
   })
-  const totalPages = Math.max(1, Math.ceil(firstPage.total / MAX_CLUSTER_PLAYERS_PAGE_SIZE))
+  const effectiveTotal = Math.min(firstPage.total, normalizedLimit)
+  const totalPages = Math.max(1, Math.ceil(effectiveTotal / pageSize))
 
   if (totalPages === 1) {
-    return firstPage.players
+    return firstPage.players.slice(0, normalizedLimit)
   }
 
   const remainingPages = await Promise.all(
     Array.from({ length: totalPages - 1 }, (_, index) =>
       apiGet(`/clusters/${clusterRequestId}/players`, {
         page: index + 2,
-        page_size: MAX_CLUSTER_PLAYERS_PAGE_SIZE
+        page_size: pageSize
       })
     )
   )
 
-  return [firstPage.players, ...remainingPages.map((page) => page.players)].flat()
+  return [firstPage.players, ...remainingPages.map((page) => page.players)].flat().slice(0, normalizedLimit)
 }
+
 
 async function runClustering() {
   if (!canRunClustering.value) return
@@ -338,7 +384,8 @@ async function runClustering() {
       params: normalizeParamsForPayload(),
       distance_metric: distanceMetric.value,
       scaling: scaling.value,
-      filters: {}
+      filters: {},
+      player_limit: Math.max(2, Number(clusterPlayerLimit.value) || MAX_CLUSTER_PLAYERS_PAGE_SIZE)
     }
 
     clusterResult.value = await apiPost('/cluster', payload)
@@ -346,10 +393,10 @@ async function runClustering() {
     clusterRequestId.value = nextClusterRequestId
 
     const [clusterPlayersResp, playersResp] = await Promise.all([
-      fetchClusterPlayers(nextClusterRequestId),
+      fetchClusterPlayers(nextClusterRequestId, clusterPlayerLimit.value),
       apiPost('/players/query', {
         filters: [],
-        limit: MAX_PLAYER_QUERY_LIMIT,
+        limit: Math.min(MAX_PLAYER_QUERY_LIMIT, Math.max(2, Number(clusterPlayerLimit.value) || MAX_PLAYER_QUERY_LIMIT)),
         offset: 0,
         sort_by: 'career_win_pct',
         sort_order: 'desc',
@@ -358,7 +405,9 @@ async function runClustering() {
     ])
 
     clusterPlayers.value = clusterPlayersResp
-    clusterByPlayer.value = Object.fromEntries(clusterPlayersResp.map((p) => [p.player_id, p.cluster_id]))
+    clusterByPlayer.value = Object.fromEntries(
+      clusterPlayersResp.map((p) => [normalizePlayerId(p.player_id), p.cluster_id])
+    )
     playerRows.value = playersResp.players
     reconcileStoryStateAfterClustering()
   } catch (err) {
@@ -465,6 +514,12 @@ function reconcileStoryStateAfterClustering() {
       </div>
 
       <div class="filters">
+
+        <label>
+          Players to cluster
+          <input v-model.number="clusterPlayerLimit" type="number" min="2" :max="MAX_CLUSTER_PLAYERS_PAGE_SIZE" step="1" />
+        </label>
+
         <label>
           Attributes
           <select v-model="selectedAttributes" multiple size="6">
@@ -597,7 +652,7 @@ function reconcileStoryStateAfterClustering() {
     <template v-else>
       <ClusterOverviewView
         :cluster-result="clusterResult"
-        :players="enrichedPlayers"
+        :players="overviewPlayers"
         :cluster-players="clusterPlayers"
         :clustering-config="activeClusteringConfig"
         :projection-metadata="projectionMetadata"
