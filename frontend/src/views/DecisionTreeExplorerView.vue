@@ -488,7 +488,33 @@ function drawTree() {
     }
   }
   const contextualIds = contextualNodeIds(fullRoot, highlightedNodeIds)
-  const maxLabelLength = d3.max(fullRoot.descendants(), (node) => node.data._labelLength ?? 0) ?? 0
+  const hiddenIds = collapsed.value
+  const depthLimit = Math.max(0, Number(maxDepth.value))
+  const enforceContext = showActiveContextOnly.value || fullExpansionBlocked.value
+  const visibleBaseNodes = fullRoot.descendants().filter((node) => {
+    const id = String(node.data.id)
+    if (node.depth > depthLimit) return false
+    if (enforceContext && !contextualIds.has(id) && !forcedVisible.has(id) && !queryMatchSet.has(id)) return false
+    return !node.ancestors().slice(0, -1).some((ancestor) => hiddenIds.has(ancestor.data.id))
+  })
+  const visibleIds = new Set(visibleBaseNodes.map((node) => String(node.data.id)))
+  if (!visibleBaseNodes.length) return
+  const buildVisibleSubtree = (node) => {
+    const id = String(node.data.id)
+    if (!visibleIds.has(id)) return null
+    const children = (node.children ?? []).map((child) => buildVisibleSubtree(child)).filter(Boolean)
+    return { ...node.data, children }
+  }
+  const visibleTreeRootData = buildVisibleSubtree(fullRoot)
+  if (!visibleTreeRootData) return
+  const visibleRoot = d3.hierarchy(visibleTreeRootData)
+  visibleRoot.eachAfter((node) => {
+    const children = node.children ?? []
+    const leafCount = children.length ? d3.sum(children, (child) => child.data._leafCount ?? 1) : 1
+    node.data._leafCount = leafCount
+    node.data._labelLength = String(node.data.name ?? '').length
+  })
+  const maxLabelLength = d3.max(visibleRoot.descendants(), (node) => node.data._labelLength ?? 0) ?? 0
   const siblingSpacingBase = 105 + Math.min(90, maxLabelLength * 1.2)
   const depthSpacing = 160
   d3.tree()
@@ -499,22 +525,10 @@ function drawTree() {
       const labelFactor = ((a.data._labelLength ?? 0) + (b.data._labelLength ?? 0)) / 50
       const familyWeight = a.parent === b.parent ? 1 : 1.55
       return familyWeight * (0.72 + labelFactor) * ((aLeafWeight + bLeafWeight) / 2)
-    })(fullRoot)
+    })(visibleRoot)
 
-  const hiddenIds = collapsed.value
-  const depthLimit = Math.max(0, Number(maxDepth.value))
-  const enforceContext = showActiveContextOnly.value || fullExpansionBlocked.value
-  const visibleNodes = fullRoot.descendants().filter((node) => {
-    const id = String(node.data.id)
-    if (node.depth > depthLimit) return false
-    if (enforceContext && !contextualIds.has(id) && !forcedVisible.has(id) && !queryMatchSet.has(id)) return false
-    return !node.ancestors().slice(0, -1).some((ancestor) => hiddenIds.has(ancestor.data.id))
-  })
-  const visibleIds = new Set(visibleNodes.map((node) => node.data.id))
-  if (!visibleNodes.length) return
-  const links = fullRoot
-    .links()
-    .filter((link) => visibleIds.has(link.source.data.id) && visibleIds.has(link.target.data.id))
+  const visibleNodes = visibleRoot.descendants()
+  const links = visibleRoot.links()
   const highlightedLinkIds = new Set(
     links
       .filter((link) => highlightedNodeIds.has(String(link.source.data.id)) && highlightedNodeIds.has(String(link.target.data.id)))
