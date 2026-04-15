@@ -37,6 +37,7 @@ const maxDepthLimit = ref(8)
 const showActiveContextOnly = ref(true)
 const expandAll = ref(false)
 const featureSearch = ref('')
+const opponentSearch = ref('')
 const matchedFeatureNodeIds = ref([])
 const activeMatchIndex = ref(0)
 const focusedNodeId = ref(null)
@@ -65,12 +66,17 @@ const matchKeyForRow = (row) => {
   return `composite:${row?.player_id ?? ''}|${row?.opponent_id ?? ''}|${row?.match_date ?? ''}`
 }
 const playerMatchRows = computed(() => props.players.filter((p) => p.player_id === selectedPlayer.value))
-const matchOptions = computed(() =>
+const allMatchOptions = computed(() =>
   playerMatchRows.value.map((row) => ({
     key: matchKeyForRow(row),
     label: `${row.match_date ?? '-'} · vs ${row.opponent_name ?? displayPlayerName(row.opponent_id)} · ${row.surface ?? '-'} · match_id=${row.match_id ?? '-'}`
   }))
 )
+const matchOptions = computed(() => {
+  const query = opponentSearch.value.trim().toLowerCase()
+  if (!query) return allMatchOptions.value
+  return allMatchOptions.value.filter((row) => row.label.toLowerCase().includes(query))
+})
 const selectedMatchRow = computed(() =>
   playerMatchRows.value.find((row) => matchKeyForRow(row) === selectedMatchKey.value) ?? null
 )
@@ -140,6 +146,7 @@ onMounted(async () => {
   }
 })
 watch(selectedPlayer, () => {
+  opponentSearch.value = ''
   const keys = playerMatchRows.value.map((row) => matchKeyForRow(row))
   if (!keys.length) {
     selectedMatchKey.value = ''
@@ -823,8 +830,17 @@ function formatFixed(value, digits = 3) {
         </select>
       </label>
       <label>
+        Opponent search
+        <input
+          v-model.trim="opponentSearch"
+          type="text"
+          placeholder="Filter match rows by opponent"
+        />
+      </label>
+      <label>
         Match row
         <select v-model="selectedMatchKey">
+          <option v-if="!matchOptions.length" value="" disabled>No match rows for current filter</option>
           <option v-for="row in matchOptions" :key="row.key" :value="row.key">{{ row.label }}</option>
         </select>
       </label>
