@@ -122,9 +122,13 @@ onMounted(async () => {
   }
 })
 watch(selectedPlayer, () => {
-  const firstMatchKey = playerMatchRows.value[0] ? matchKeyForRow(playerMatchRows.value[0]) : ''
-  if (selectedMatchKey.value !== firstMatchKey) {
-    selectedMatchKey.value = firstMatchKey
+  const keys = playerMatchRows.value.map((row) => matchKeyForRow(row))
+  if (!keys.length) {
+    selectedMatchKey.value = ''
+    return
+  }
+  if (!keys.includes(selectedMatchKey.value)) {
+    selectedMatchKey.value = keys[0]
   }
 })
 watch(

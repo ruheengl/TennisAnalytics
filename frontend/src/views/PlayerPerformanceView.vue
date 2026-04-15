@@ -9,7 +9,7 @@ const props = defineProps({
   activeStoryStep: { type: String, default: 'overview' },
   clusterRequestId: { type: String, default: '' }
 })
-const emit = defineEmits(['update:selectedPlayerId', 'update:activeStoryStep'])
+const emit = defineEmits(['update:selectedPlayerId', 'update:activeStoryStep', 'select-match-context'])
 
 const selectedPlayer = computed({
   get: () => props.selectedPlayerId,
@@ -20,6 +20,50 @@ const brushRef = ref()
 const error = ref('')
 const dataset = ref([])
 const domain = ref(null)
+
+const useBrushWindowForMatches = ref(true)
+const selectedMatchKey = ref('')
+
+const matchKeyForRow = (row) => {
+  const hasRowId = row?.row_id !== null && row?.row_id !== undefined && row.row_id !== ''
+  if (hasRowId) return `row:${row.row_id}`
+  if (row?.match_id != null && row.match_id !== '') return `match:${row.match_id}`
+  return `composite:${row?.player_id ?? ''}|${row?.opponent_id ?? ''}|${row?.match_date ?? ''}`
+}
+const selectedPlayerRows = computed(() =>
+  props.players
+    .filter((row) => row.player_id === selectedPlayer.value)
+    .map((row) => ({
+      ...row,
+      matchDateObj: row.match_date ? new Date(row.match_date) : null
+    }))
+    .sort((a, b) => d3.descending(a.matchDateObj, b.matchDateObj))
+)
+const hasBrushWindow = computed(() => Array.isArray(domain.value) && domain.value.length === 2)
+const effectiveMatchRows = computed(() => {
+  const rows = selectedPlayerRows.value
+  if (!rows.length) return []
+  if (!useBrushWindowForMatches.value || !hasBrushWindow.value) return rows
+
+  const [start, end] = domain.value
+  const filtered = rows.filter((row) => row.matchDateObj && row.matchDateObj >= start && row.matchDateObj <= end)
+  return filtered.length ? filtered : rows
+})
+const matchOptions = computed(() =>
+  effectiveMatchRows.value.map((row) => ({
+    key: matchKeyForRow(row),
+    label: `${row.match_date ?? '-'} · vs ${row.opponent_name ?? row.opponent_id ?? '-'} · ${row.surface ?? '-'} · match_id=${row.match_id ?? '-'}`
+  }))
+)
+
+const selectedMatchRow = computed(() =>
+  effectiveMatchRows.value.find((row) => matchKeyForRow(row) === selectedMatchKey.value) ?? null
+)
+const selectedWindowLabel = computed(() => {
+  if (!hasBrushWindow.value) return 'full timeline'
+  const [start, end] = domain.value
+  return `${d3.timeFormat('%Y-%m-%d')(start)} → ${d3.timeFormat('%Y-%m-%d')(end)}`
+})
 
 const playerOptions = computed(() =>
   props.players.map((p) => ({
@@ -41,6 +85,20 @@ watch(
     const optionIds = options.map((option) => option.player_id)
     if (!optionIds.includes(selectedPlayer.value)) {
       selectedPlayer.value = options[0].player_id
+    }
+  },
+  { immediate: true }
+)
+
+watch(
+  [matchOptions, useBrushWindowForMatches],
+  ([options]) => {
+    if (!options.length) {
+      selectedMatchKey.value = ''
+      return
+    }
+    if (!options.some((option) => option.key === selectedMatchKey.value)) {
+      selectedMatchKey.value = options[0].key
     }
   },
   { immediate: true }
@@ -84,6 +142,14 @@ async function loadSeries() {
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   }
+}
+
+function continueToMatchExplanation() {
+  if (!selectedPlayer.value || !selectedMatchRow.value) return
+  emit('select-match-context', {
+    player_id: selectedPlayer.value,
+    match_key: matchKeyForRow(selectedMatchRow.value)
+  })
 }
 
 function drawChart() {
@@ -180,6 +246,28 @@ function drawBrush() {
           </option>
         </select>
       </label>
+
+      <label>
+        Match in context
+        <select v-model="selectedMatchKey" :disabled="!matchOptions.length">
+          <option v-for="option in matchOptions" :key="option.key" :value="option.key">
+            {{ option.label }}
+          </option>
+        </select>
+      </label>
+
+      <label class="inline-option">
+        <input v-model="useBrushWindowForMatches" type="checkbox" :disabled="!hasBrushWindow" />
+        Use brush date window ({{ selectedWindowLabel }})
+      </label>
+
+      <button
+        type="button"
+        :disabled="!selectedPlayer || !selectedMatchKey"
+        @click="continueToMatchExplanation"
+      >
+        Continue to match explanation
+      </button>
     </div>
 
     <p v-if="error" class="error-text">{{ error }}</p>

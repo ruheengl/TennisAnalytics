@@ -276,6 +276,19 @@ async function runClustering() {
   }
 }
 
+
+function applyMatchContextSelection(payload) {
+  if (!payload || typeof payload !== 'object') return
+
+  const nextPlayerId = String(payload.player_id ?? '')
+  const nextMatchKey = String(payload.match_key ?? '')
+
+  if (nextPlayerId) selectedPlayerId.value = nextPlayerId
+  selectedMatchKey.value = nextMatchKey
+  activeStoryStep.value = 'tree'
+  activeTab.value = 'tree'
+}
+
 function reconcileStoryStateAfterClustering() {
   const validPlayers = enrichedPlayers.value
   const validPlayerIds = validPlayers.map((player) => player.player_id)
@@ -482,6 +495,7 @@ function reconcileStoryStateAfterClustering() {
       :cluster-request-id="clusterRequestId"
       @update:selected-player-id="selectedPlayerId = $event"
       @update:active-story-step="activeStoryStep = $event"
+      @select-match-context="applyMatchContextSelection"
     />
 
 
