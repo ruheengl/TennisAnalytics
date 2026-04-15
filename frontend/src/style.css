@@ -44,26 +44,6 @@ h3 {
   align-items: center;
 }
 
-.tabs {
-  display: flex;
-  gap: 0.55rem;
-  overflow-x: auto;
-}
-
-.tab {
-  border: 1px solid #cbd5e1;
-  border-radius: 999px;
-  background: #fff;
-  color: #334155;
-  padding: 0.45rem 0.75rem;
-  cursor: pointer;
-}
-
-.tab.active {
-  background: #0f172a;
-  color: #fff;
-}
-
 .filters {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));

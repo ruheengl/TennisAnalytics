@@ -4,15 +4,7 @@ import { apiGet, apiPost } from './services/api'
 import ClusterOverviewView from './views/ClusterOverviewView.vue'
 import PlayerPerformanceView from './views/PlayerPerformanceView.vue'
 import DecisionTreeExplorerView from './views/DecisionTreeExplorerView.vue'
-import StoryStepper from './components/StoryStepper.vue'
 
-const tabs = [
-  { key: 'overview', label: 'Cluster Overview' },
-  { key: 'performance', label: 'Player Performance' },
-  { key: 'tree', label: 'Match Outcome Explainer' }
-]
-
-const activeTab = ref('overview')
 const loading = ref(false)
 const error = ref('')
 
@@ -249,13 +241,6 @@ const playersInSelectedCluster = computed(() => {
 
 onMounted(loadInitialState)
 
-watch(activeTab, (nextTab) => {
-  activeStoryStep.value = nextTab
-  if (nextTab === 'tree') {
-    predictionPanelOpen.value = true
-  }
-})
-
 watch(
   availableAttributes,
   (attrs) => {
@@ -443,7 +428,6 @@ function applyMatchContextSelection(payload) {
   if (nextPlayerId) selectedPlayerId.value = nextPlayerId
   selectedMatchKey.value = nextMatchKey
   activeStoryStep.value = 'tree'
-  activeTab.value = 'tree'
   openPredictionPanelAndScroll()
 }
 
@@ -629,28 +613,6 @@ function reconcileStoryStateAfterClustering() {
         Active cluster request: <strong>{{ clusterResult.cluster_request_id }}</strong>
       </p>
     </section>
-
-    <StoryStepper
-      :active-story-step="activeStoryStep"
-      :active-tab="activeTab"
-      :overview-context="selectedClusterSummary"
-      :performance-context="selectedPlayerTrendSummary"
-      :explainer-context="explainerContext"
-      @update:active-story-step="activeStoryStep = $event"
-      @update:active-tab="activeTab = $event"
-    />
-
-    <nav class="tabs panel">
-      <button
-        v-for="tab in tabs"
-        :key="tab.key"
-        class="tab"
-        :class="{ active: activeTab === tab.key }"
-        @click="activeTab = tab.key"
-      >
-        {{ tab.label }}
-      </button>
-    </nav>
 
     <section v-if="loading" class="panel">Loading data from API...</section>
     <section v-else-if="error" class="panel error-text">{{ error }}</section>
