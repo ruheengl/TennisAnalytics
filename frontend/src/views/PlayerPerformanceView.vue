@@ -128,12 +128,12 @@ async function loadSeries() {
     }
     for (const point of ace.points) {
       const rec = map.get(point.match_date) ?? { date: new Date(point.match_date), elo: null, ace: null, win: null }
-      rec.ace = Number(point.value ?? 0) * 100
+      rec.ace = Number(point.value ?? 0)
       map.set(point.match_date, rec)
     }
     for (const point of win.points) {
       const rec = map.get(point.match_date) ?? { date: new Date(point.match_date), elo: null, ace: null, win: null }
-      rec.win = Number(point.value ?? 0) * 100
+      rec.win = Number(point.value ?? 0)
       map.set(point.match_date, rec)
     }
 
