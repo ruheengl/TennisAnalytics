@@ -6,6 +6,7 @@ import { apiGet } from '../services/api'
 const props = defineProps({
   players: { type: Array, required: true },
   selectedPlayerId: { type: String, default: '' },
+  selectedPlayerName: { type: String, default: '' },
   activeStoryStep: { type: String, default: 'overview' },
   clusterRequestId: { type: String, default: '' },
   embedded: { type: Boolean, default: false }
@@ -87,6 +88,9 @@ const playerOptions = computed(() =>
 )
 
 const selectedPlayerLabel = computed(() => {
+  if (props.selectedPlayerName && String(props.selectedPlayerName).trim()) {
+    return props.selectedPlayerName
+  }
   if (!selectedPlayer.value) return 'No player selected'
   const selectedOption = playerOptions.value.find((option) => option.player_id === selectedPlayer.value)
   return selectedOption?.player_name ?? selectedPlayer.value

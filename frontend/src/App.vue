@@ -680,6 +680,7 @@ function reconcileStoryStateAfterClustering() {
         <PlayerPerformanceView
           :players="enrichedPlayers"
           :selected-player-id="selectedPlayerId"
+          :selected-player-name="selectedPlayerDisplayName"
           :active-story-step="activeStoryStep"
           :cluster-request-id="clusterRequestId"
           embedded
