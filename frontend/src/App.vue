@@ -236,6 +236,12 @@ const selectedPlayerTrendSummary = computed(() => {
   }
 })
 
+const selectedPlayerDisplayName = computed(() => {
+  if (!selectedPlayerId.value) return 'No player selected'
+  const selectedPlayer = overviewPlayers.value.find((player) => player.player_id === selectedPlayerId.value)
+  return selectedPlayer?.player_name ?? selectedPlayerId.value
+})
+
 const playersInSelectedCluster = computed(() => {
   if (selectedClusterId.value === 'all') return enrichedPlayers.value
   return enrichedPlayers.value.filter((player) => player.cluster_id === Number(selectedClusterId.value))
@@ -670,7 +676,7 @@ function reconcileStoryStateAfterClustering() {
         :open="playerTrendsPanelOpen"
         @toggle="playerTrendsPanelOpen = $event.target.open"
       >
-        <summary><strong>Player Trends</strong></summary>
+        <summary><strong>Player Trends — {{ selectedPlayerDisplayName }}</strong></summary>
         <PlayerPerformanceView
           :players="enrichedPlayers"
           :selected-player-id="selectedPlayerId"
