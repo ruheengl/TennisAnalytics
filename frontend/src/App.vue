@@ -24,6 +24,7 @@ const clusterByPlayer = ref({})
 const selectedClusterId = ref('all')
 const selectedPlayerId = ref('')
 const selectedMatchKey = ref('')
+const playerTrendsPanelOpen = ref(false)
 const activeStoryStep = ref('overview')
 const clusterRequestId = ref('')
 const explainerContext = ref({
@@ -251,6 +252,12 @@ watch(
   },
   { immediate: true }
 )
+
+watch(selectedPlayerId, (nextPlayerId) => {
+  if (nextPlayerId) {
+    playerTrendsPanelOpen.value = true
+  }
+})
 
 function normalizeParamsForPayload() {
   if (algorithm.value === 'dbscan') {
@@ -588,13 +595,18 @@ function reconcileStoryStateAfterClustering() {
         @update:active-story-step="activeStoryStep = $event"
       />
 
-      <details class="panel" :open="activeTab === 'performance'">
-        <summary><strong>Player Performance Trends</strong></summary>
+      <details
+        class="panel"
+        :open="playerTrendsPanelOpen"
+        @toggle="playerTrendsPanelOpen = $event.target.open"
+      >
+        <summary><strong>Player Trends</strong></summary>
         <PlayerPerformanceView
           :players="enrichedPlayers"
           :selected-player-id="selectedPlayerId"
           :active-story-step="activeStoryStep"
           :cluster-request-id="clusterRequestId"
+          embedded
           @update:selected-player-id="selectedPlayerId = $event"
           @update:active-story-step="activeStoryStep = $event"
           @select-match-context="applyMatchContextSelection"

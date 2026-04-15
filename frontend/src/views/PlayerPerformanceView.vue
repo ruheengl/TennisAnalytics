@@ -7,7 +7,8 @@ const props = defineProps({
   players: { type: Array, required: true },
   selectedPlayerId: { type: String, default: '' },
   activeStoryStep: { type: String, default: 'overview' },
-  clusterRequestId: { type: String, default: '' }
+  clusterRequestId: { type: String, default: '' },
+  embedded: { type: Boolean, default: false }
 })
 const emit = defineEmits(['update:selectedPlayerId', 'update:activeStoryStep', 'select-match-context'])
 
@@ -236,9 +237,9 @@ function drawBrush() {
 
 <template>
   <section class="panel">
-    <h2>Player performance (multi-metric time series)</h2>
+    <h2 v-if="!embedded">Player performance (multi-metric time series)</h2>
     <div class="filters">
-      <label>
+      <label v-if="!embedded">
         Player
         <select v-model="selectedPlayer">
           <option v-for="player in playerOptions" :key="player.player_id" :value="player.player_id">
@@ -272,7 +273,7 @@ function drawBrush() {
 
     <p v-if="error" class="error-text">{{ error }}</p>
     <svg ref="svgRef" class="chart"></svg>
-    <p class="subtle">Use the brush below to zoom the main chart.</p>
+    <p class="subtle">{{ embedded ? 'Brush the mini chart to zoom.' : 'Use the brush below to zoom the main chart.' }}</p>
     <svg ref="brushRef" class="chart compact"></svg>
   </section>
 </template>
