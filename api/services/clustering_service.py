@@ -356,8 +356,12 @@ def load_cluster(req: ClusterRequest) -> ClusterCacheEntry:
             raise HTTPException(status_code=400, detail=f"Unknown attributes: {invalid}")
 
         where_sql, params = build_where(normalized["filters"], valid_cols)
-        cols = ', '.join(f'"{c}"' for c in normalized["attributes"])
-        query = f"SELECT player_id, {cols} FROM player_features{where_sql} ORDER BY player_id"
+        aggregated_cols = ', '.join(f'AVG("{c}") AS "{c}"' for c in normalized["attributes"])
+        query = (
+            f"SELECT player_id, {aggregated_cols} "
+            f"FROM player_features{where_sql} "
+            "GROUP BY player_id ORDER BY player_id"
+        )
         query_params = list(params)
         if normalized["player_limit"] is not None:
             query += " LIMIT ?"
