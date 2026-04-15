@@ -3,9 +3,18 @@ import { computed, onMounted, ref, watch } from 'vue'
 import * as d3 from 'd3'
 import { apiGet } from '../services/api'
 
-const props = defineProps({ players: { type: Array, required: true } })
+const props = defineProps({
+  players: { type: Array, required: true },
+  selectedPlayerId: { type: String, default: '' },
+  activeStoryStep: { type: String, default: 'overview' },
+  clusterRequestId: { type: String, default: '' }
+})
+const emit = defineEmits(['update:selectedPlayerId', 'update:activeStoryStep'])
 
-const selectedPlayer = ref('')
+const selectedPlayer = computed({
+  get: () => props.selectedPlayerId,
+  set: (value) => emit('update:selectedPlayerId', value)
+})
 const svgRef = ref()
 const brushRef = ref()
 const error = ref('')
@@ -24,6 +33,18 @@ onMounted(() => {
     selectedPlayer.value = playerOptions.value[0].player_id
   }
 })
+
+watch(
+  playerOptions,
+  (options) => {
+    if (!options.length) return
+    const optionIds = options.map((option) => option.player_id)
+    if (!optionIds.includes(selectedPlayer.value)) {
+      selectedPlayer.value = options[0].player_id
+    }
+  },
+  { immediate: true }
+)
 
 watch(selectedPlayer, async () => {
   await loadSeries()

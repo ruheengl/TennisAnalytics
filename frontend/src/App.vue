@@ -20,6 +20,11 @@ const clusterResult = ref(null)
 const clusterPlayers = ref([])
 const playerRows = ref([])
 const clusterByPlayer = ref({})
+const selectedClusterId = ref('all')
+const selectedPlayerId = ref('')
+const selectedMatchKey = ref('')
+const activeStoryStep = ref('overview')
+const clusterRequestId = ref('')
 
 const selectedAttributes = ref([])
 const configMode = ref('simple')
@@ -135,6 +140,10 @@ const enrichedPlayers = computed(() => {
 
 onMounted(loadInitialState)
 
+watch(activeTab, (nextTab) => {
+  activeStoryStep.value = nextTab
+})
+
 watch(
   availableAttributes,
   (attrs) => {
@@ -241,27 +250,56 @@ async function runClustering() {
     }
 
     clusterResult.value = await apiPost('/cluster', payload)
-    const clusterRequestId = clusterResult.value.cluster_request_id
+    const nextClusterRequestId = clusterResult.value.cluster_request_id
+    clusterRequestId.value = nextClusterRequestId
 
     const [clusterPlayersResp, playersResp] = await Promise.all([
-      fetchClusterPlayers(clusterRequestId),
+      fetchClusterPlayers(nextClusterRequestId),
       apiPost('/players/query', {
         filters: [],
         limit: MAX_PLAYER_QUERY_LIMIT,
         offset: 0,
         sort_by: 'career_win_pct',
         sort_order: 'desc',
-        cluster_request_id: clusterRequestId
+        cluster_request_id: nextClusterRequestId
       })
     ])
 
     clusterPlayers.value = clusterPlayersResp
     clusterByPlayer.value = Object.fromEntries(clusterPlayersResp.map((p) => [p.player_id, p.cluster_id]))
     playerRows.value = playersResp.players
+    reconcileStoryStateAfterClustering()
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
     loading.value = false
+  }
+}
+
+function reconcileStoryStateAfterClustering() {
+  const validPlayers = enrichedPlayers.value
+  const validPlayerIds = validPlayers.map((player) => player.player_id)
+  const validClusterIds = [...new Set(validPlayers.map((player) => player.cluster_id))].sort((a, b) => a - b)
+
+  if (
+    selectedClusterId.value !== 'all' &&
+    !validClusterIds.includes(Number(selectedClusterId.value))
+  ) {
+    if (!validClusterIds.length) {
+      selectedClusterId.value = 'all'
+    } else {
+      const currentCluster = Number(selectedClusterId.value)
+      const nearestCluster = validClusterIds.reduce((nearest, candidate) => {
+        if (nearest === null) return candidate
+        return Math.abs(candidate - currentCluster) < Math.abs(nearest - currentCluster) ? candidate : nearest
+      }, null)
+      selectedClusterId.value = String(nearestCluster ?? 'all')
+    }
+  }
+
+  if (!validPlayerIds.includes(selectedPlayerId.value)) {
+    selectedPlayerId.value = validPlayerIds[0] ?? ''
+    selectedMatchKey.value = ''
   }
 }
 </script>
@@ -428,12 +466,22 @@ async function runClustering() {
       :cluster-players="clusterPlayers"
       :clustering-config="activeClusteringConfig"
       :projection-metadata="projectionMetadata"
+      :selected-cluster-id="selectedClusterId"
+      :active-story-step="activeStoryStep"
+      :cluster-request-id="clusterRequestId"
+      @update:selected-cluster-id="selectedClusterId = $event"
+      @update:active-story-step="activeStoryStep = $event"
     />
 
 
     <PlayerPerformanceView
       v-else-if="activeTab === 'performance'"
       :players="enrichedPlayers"
+      :selected-player-id="selectedPlayerId"
+      :active-story-step="activeStoryStep"
+      :cluster-request-id="clusterRequestId"
+      @update:selected-player-id="selectedPlayerId = $event"
+      @update:active-story-step="activeStoryStep = $event"
     />
 
 
@@ -441,6 +489,13 @@ async function runClustering() {
       v-else
       :players="enrichedPlayers"
       :feature-columns="predictorFeatureColumns"
+      :selected-player-id="selectedPlayerId"
+      :selected-match-key="selectedMatchKey"
+      :active-story-step="activeStoryStep"
+      :cluster-request-id="clusterRequestId"
+      @update:selected-player-id="selectedPlayerId = $event"
+      @update:selected-match-key="selectedMatchKey = $event"
+      @update:active-story-step="activeStoryStep = $event"
     />
   </main>
 </template>

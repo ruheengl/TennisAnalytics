@@ -5,11 +5,22 @@ import { apiPost } from '../services/api'
 
 const props = defineProps({
   players: { type: Array, required: true },
-  featureColumns: { type: Array, required: true }
+  featureColumns: { type: Array, required: true },
+  selectedPlayerId: { type: String, default: '' },
+  selectedMatchKey: { type: String, default: '' },
+  activeStoryStep: { type: String, default: 'overview' },
+  clusterRequestId: { type: String, default: '' }
 })
+const emit = defineEmits(['update:selectedPlayerId', 'update:selectedMatchKey', 'update:activeStoryStep'])
 
-const selectedPlayer = ref('')
-const selectedMatchKey = ref('')
+const selectedPlayer = computed({
+  get: () => props.selectedPlayerId,
+  set: (value) => emit('update:selectedPlayerId', value)
+})
+const selectedMatchKey = computed({
+  get: () => props.selectedMatchKey,
+  set: (value) => emit('update:selectedMatchKey', value)
+})
 const treeSvg = ref()
 const treeViewport = ref()
 const barSvg = ref()
@@ -116,6 +127,20 @@ watch(selectedPlayer, () => {
     selectedMatchKey.value = firstMatchKey
   }
 })
+watch(
+  matchOptions,
+  (options) => {
+    const optionKeys = options.map((option) => option.key)
+    if (!optionKeys.length) {
+      if (selectedMatchKey.value) selectedMatchKey.value = ''
+      return
+    }
+    if (!optionKeys.includes(selectedMatchKey.value)) {
+      selectedMatchKey.value = optionKeys[0]
+    }
+  },
+  { immediate: true }
+)
 watch(selectedMatchKey, loadPrediction)
 watch(
   canRequestPrediction,

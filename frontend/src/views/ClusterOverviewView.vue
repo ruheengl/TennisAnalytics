@@ -7,11 +7,18 @@ const props = defineProps({
   players: { type: Array, required: true },
   clusterPlayers: { type: Array, required: true },
   clusteringConfig: { type: Object, required: true },
-  projectionMetadata: { type: Object, required: true }
+  projectionMetadata: { type: Object, required: true },
+  selectedClusterId: { type: String, required: true },
+  activeStoryStep: { type: String, default: 'overview' },
+  clusterRequestId: { type: String, default: '' }
 })
+const emit = defineEmits(['update:selectedClusterId', 'update:activeStoryStep'])
 
 const svgRef = ref()
-const selectedCluster = ref('all')
+const selectedCluster = computed({
+  get: () => props.selectedClusterId,
+  set: (value) => emit('update:selectedClusterId', value)
+})
 
 const filtered = computed(() => {
   if (selectedCluster.value === 'all') return props.players
@@ -63,13 +70,6 @@ const projectionComponents = computed(() => {
     label: componentLabel(index)
   }))
 })
-
-watch(
-  () => props.clusterResult.cluster_request_id,
-  () => {
-    selectedCluster.value = 'all'
-  }
-)
 
 function drawScatter() {
   const svg = d3.select(svgRef.value)
