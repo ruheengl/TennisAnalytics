@@ -6,6 +6,7 @@ import { apiGet } from '../services/api'
 const props = defineProps({
   players: { type: Array, required: true },
   selectedPlayerId: { type: String, default: '' },
+  selectedPlayerName: { type: String, default: '' },
   activeStoryStep: { type: String, default: 'overview' },
   clusterRequestId: { type: String, default: '' },
   embedded: { type: Boolean, default: false }
@@ -86,6 +87,15 @@ const playerOptions = computed(() =>
   }))
 )
 
+const selectedPlayerLabel = computed(() => {
+  if (props.selectedPlayerName && String(props.selectedPlayerName).trim()) {
+    return props.selectedPlayerName
+  }
+  if (!selectedPlayer.value) return 'No player selected'
+  const selectedOption = playerOptions.value.find((option) => option.player_id === selectedPlayer.value)
+  return selectedOption?.player_name ?? selectedPlayer.value
+})
+
 onMounted(() => {
   if (!selectedPlayer.value && playerOptions.value.length > 0) {
     selectedPlayer.value = playerOptions.value[0].player_id
@@ -130,9 +140,9 @@ async function loadSeries() {
   error.value = ''
   try {
     const [elo, ace, win] = await Promise.all([
-      apiGet(`/players/${encodeURIComponent(selectedPlayer.value)}/metrics/timeseries`, { metric: 'elo', limit: 500 }),
-      apiGet(`/players/${encodeURIComponent(selectedPlayer.value)}/metrics/timeseries`, { metric: 'ace_pct', limit: 500 }),
-      apiGet(`/players/${encodeURIComponent(selectedPlayer.value)}/metrics/timeseries`, { metric: 'win_pct', limit: 500 })
+      apiGet(`/players/${encodeURIComponent(selectedPlayer.value)}/metrics/timeseries`, { metric: 'elo', limit: 20000 }),
+      apiGet(`/players/${encodeURIComponent(selectedPlayer.value)}/metrics/timeseries`, { metric: 'ace_pct', limit: 20000 }),
+      apiGet(`/players/${encodeURIComponent(selectedPlayer.value)}/metrics/timeseries`, { metric: 'win_pct', limit: 20000 })
     ])
 
     const map = new Map()
@@ -252,7 +262,7 @@ function drawBrush() {
   <section class="panel">
     <h2 v-if="!embedded">Player performance (multi-metric time series)</h2>
     <div class="trend-header">
-      <h3>Trend context</h3>
+      <h3>Trend context for {{ selectedPlayerLabel }}</h3>
       <button
         v-if="selectedMatchRow && selectedMatchKey"
         type="button"
