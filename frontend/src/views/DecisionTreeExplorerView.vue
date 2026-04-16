@@ -137,6 +137,11 @@ const contextPanel = computed(() => {
 onMounted(async () => {
   if (!selectedPlayer.value && playerOptions.value.length > 0) {
     selectedPlayer.value = playerOptions.value[0].player_id
+    // watch(selectedMatchKey) will fire once matchKey is set
+  } else if (selectedMatchKey.value) {
+    // matchKey already set (v-show keeps component mounted from the start),
+    // so watch(selectedMatchKey) won't fire — load prediction manually.
+    await loadPrediction()
   }
 })
 watch(selectedPlayer, () => {

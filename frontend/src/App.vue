@@ -133,7 +133,7 @@ const playersInSelectedCluster = computed(() => {
   return enrichedPlayers.value.filter(p => p.cluster_id === Number(selectedClusterId.value))
 })
 
-// Active tab
+// Active tab — 'overview' | 'trends' | 'explainer'
 const activeTab = ref('overview')
 function setTab(tab) { activeTab.value = tab }
 
@@ -157,9 +157,13 @@ watch([configMode, simplePreset, simpleGroupCount], () => {
 
 watch([selectedClusterId, playersInSelectedCluster], ([, players]) => {
   const ids = players.map(p => String(p.player_id))
-  if (!ids.length) { if (selectedPlayerId.value) { selectedPlayerId.value = ''; selectedMatchKey.value = '' } return }
+  if (!ids.length) {
+    if (selectedPlayerId.value) { selectedPlayerId.value = ''; selectedMatchKey.value = '' }
+    return
+  }
   if (!ids.includes(selectedPlayerId.value)) {
-    selectedPlayerId.value = ids[0]; selectedMatchKey.value = ''
+    selectedPlayerId.value = ids[0]
+    selectedMatchKey.value = ''
     explainerContext.value = { matchLabel: 'No match selected', winProbability: null }
   }
 }, { immediate: true })
@@ -235,14 +239,8 @@ function applyMatchContextSelection(payload) {
   if (nextPlayerId) selectedPlayerId.value = nextPlayerId
   selectedMatchKey.value = nextMatchKey
   activeStoryStep.value = 'tree'
+  // Switch tab AFTER updating state so the already-mounted component picks up the new values
   setTab('explainer')
-  openPredictionPanelAndScroll()
-}
-
-async function openPredictionPanelAndScroll() {
-  predictionPanelOpen.value = true
-  await nextTick()
-  predictionPanelRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 function reconcileStoryStateAfterClustering() {
@@ -302,7 +300,6 @@ function reconcileStoryStateAfterClustering() {
     <!-- ── Sidebar ─────────────────────────────────────────── -->
     <aside class="sidebar">
 
-      <!-- Workflow hint at top -->
       <div class="sidebar-section">
         <div class="sidebar-label">How to use</div>
         <div class="sidebar-hint">
@@ -312,7 +309,6 @@ function reconcileStoryStateAfterClustering() {
         </div>
       </div>
 
-      <!-- Algorithm -->
       <div class="sidebar-section">
         <div class="sidebar-label">
           Clustering algorithm
@@ -327,7 +323,6 @@ function reconcileStoryStateAfterClustering() {
         <div class="param-hint" style="margin-top:5px;">{{ algoDescriptions[algorithm] }}</div>
       </div>
 
-      <!-- Simple / Advanced mode toggle -->
       <div class="sidebar-section">
         <div class="sidebar-label">Configuration mode</div>
         <div class="mode-toggle-row" style="margin-bottom:5px;">
@@ -340,7 +335,6 @@ function reconcileStoryStateAfterClustering() {
 
       <!-- Simple mode -->
       <template v-if="configMode === 'simple'">
-
         <div class="sidebar-section">
           <div class="sidebar-label">
             Preset
@@ -351,9 +345,9 @@ function reconcileStoryStateAfterClustering() {
             <button class="preset-btn" :class="{ active: simplePreset === 'detailed' }" @click="simplePreset = 'detailed'">Detailed</button>
             <button class="preset-btn" :class="{ active: simplePreset === 'fast' }" @click="simplePreset = 'fast'">Fast</button>
           </div>
-          <div class="preset-hint" v-if="simplePreset === 'balanced'">K-Means · euclidean distance · z-score scaling. Good all-purpose default.</div>
-          <div class="preset-hint" v-else-if="simplePreset === 'detailed'">GMM · cosine distance · z-score. Finds subtler, overlapping archetypes. Slower.</div>
-          <div class="preset-hint" v-else>K-Means · manhattan distance · min-max. Fastest option — great for quick exploration.</div>
+          <div class="preset-hint" v-if="simplePreset === 'balanced'">K-Means · euclidean · z-score. Good all-purpose default.</div>
+          <div class="preset-hint" v-else-if="simplePreset === 'detailed'">GMM · cosine · z-score. Finds subtler archetypes. Slower.</div>
+          <div class="preset-hint" v-else>K-Means · manhattan · min-max. Fastest — great for quick exploration.</div>
         </div>
 
         <div class="sidebar-section">
@@ -362,35 +356,26 @@ function reconcileStoryStateAfterClustering() {
             <span class="tip" data-tip="How many distinct player archetypes to find. 4–8 works well for ATP data. More groups = finer detail but harder to interpret.">?</span>
           </div>
           <div class="param-row">
-            <div class="param-lbl">
-              <span>Groups</span>
-              <span class="param-val">{{ simpleGroupCount }}</span>
-            </div>
+            <div class="param-lbl"><span>Groups</span><span class="param-val">{{ simpleGroupCount }}</span></div>
             <input type="range" min="2" max="20" step="1" v-model.number="simpleGroupCount" />
           </div>
           <div class="param-hint">Each group will be one player archetype (e.g. "big server", "baseline grinder").</div>
-
           <div class="param-row" style="margin-top:8px;">
-            <div class="param-lbl">
-              <span>Max iterations</span>
-              <span class="param-val">{{ maxIter }}</span>
-            </div>
+            <div class="param-lbl"><span>Max iterations</span><span class="param-val">{{ maxIter }}</span></div>
             <input type="range" min="10" max="300" step="5" v-model.number="maxIter" />
           </div>
           <div class="param-hint">How many passes the algorithm makes. More = more accurate, but slower.</div>
         </div>
-
       </template>
 
       <!-- Advanced mode -->
       <template v-else>
         <div class="sidebar-section">
           <div class="sidebar-label">Advanced parameters</div>
-
           <div class="param-row">
             <div class="param-lbl">
               Distance metric
-              <span class="tip" data-tip="How similarity between players is measured. Euclidean = straight-line distance in stat space. Cosine = angle between stat vectors (ignores scale). Manhattan = sum of absolute differences.">?</span>
+              <span class="tip" data-tip="How similarity between players is measured. Euclidean = straight-line distance. Cosine = angle between vectors (ignores scale). Manhattan = sum of absolute differences.">?</span>
             </div>
             <select v-model="distanceMetric">
               <option value="euclidean">Euclidean</option>
@@ -398,11 +383,10 @@ function reconcileStoryStateAfterClustering() {
               <option value="cosine">Cosine</option>
             </select>
           </div>
-
           <div class="param-row">
             <div class="param-lbl">
               Scaling
-              <span class="tip" data-tip="Normalises stats so no single stat dominates. Z-score = mean 0, std 1. Min-max = 0 to 1. None = raw values (only use if stats are already comparable).">?</span>
+              <span class="tip" data-tip="Normalises stats so no single stat dominates. Z-score = mean 0, std 1. Min-max = 0 to 1. None = raw values.">?</span>
             </div>
             <select v-model="scaling">
               <option value="none">None</option>
@@ -410,7 +394,6 @@ function reconcileStoryStateAfterClustering() {
               <option value="minmax">Min-max</option>
             </select>
           </div>
-
           <template v-if="algorithm !== 'dbscan'">
             <div class="param-row">
               <div class="param-lbl">
@@ -421,7 +404,6 @@ function reconcileStoryStateAfterClustering() {
               <input type="range" min="2" max="30" step="1" v-model.number="k" />
             </div>
           </template>
-
           <template v-if="algorithm === 'kmeans' || algorithm === 'gmm'">
             <div class="param-row">
               <div class="param-lbl">Max iterations<span class="param-val" style="margin-left:auto;">{{ maxIter }}</span></div>
@@ -430,34 +412,32 @@ function reconcileStoryStateAfterClustering() {
             <div class="param-row">
               <div class="param-lbl">
                 Random seed
-                <span class="tip" data-tip="Fixes the random starting point so results are reproducible. Change this to get a different random initialisation.">?</span>
+                <span class="tip" data-tip="Fixes the random starting point so results are reproducible. Change to get a different initialisation.">?</span>
               </div>
               <input type="number" v-model.number="seed" step="1" />
             </div>
           </template>
-
           <template v-else-if="algorithm === 'dbscan'">
             <div class="param-row">
               <div class="param-lbl">
                 eps (neighbourhood radius)
-                <span class="tip" data-tip="Maximum distance between two players for them to be considered neighbours. Smaller = tighter clusters. Typical range: 0.1–1.0.">?</span>
+                <span class="tip" data-tip="Maximum distance between two players to be neighbours. Smaller = tighter clusters. Typical range: 0.1–1.0.">?</span>
               </div>
               <input type="number" v-model.number="eps" min="0.0001" step="0.05" />
             </div>
             <div class="param-row">
               <div class="param-lbl">
                 min_samples
-                <span class="tip" data-tip="Minimum players needed to form a core cluster. Higher = noisier, fewer clusters. Lower = more (possibly small) clusters.">?</span>
+                <span class="tip" data-tip="Minimum players needed to form a core cluster. Higher = fewer, larger clusters.">?</span>
               </div>
               <input type="number" v-model.number="minSamples" min="1" step="1" />
             </div>
           </template>
-
           <template v-else-if="algorithm === 'hierarchical'">
             <div class="param-row">
               <div class="param-lbl">
                 Linkage
-                <span class="tip" data-tip="How clusters merge. Average = mean pairwise distance. Complete = max distance. Single = min distance (can produce chain-like clusters).">?</span>
+                <span class="tip" data-tip="How clusters merge. Average = mean pairwise distance. Complete = max distance. Single = min distance.">?</span>
               </div>
               <select v-model="linkage">
                 <option value="average">Average</option>
@@ -469,21 +449,19 @@ function reconcileStoryStateAfterClustering() {
         </div>
       </template>
 
-      <!-- Players to cluster -->
       <div class="sidebar-section">
         <div class="sidebar-label">
           Player limit
-          <span class="tip" data-tip="Maximum number of players to include. Lower this to speed up clustering during exploration. Use the full dataset for final analysis.">?</span>
+          <span class="tip" data-tip="Maximum number of players to include. Lower this to speed up clustering during exploration.">?</span>
         </div>
         <input type="number" v-model.number="clusterPlayerLimit" min="2" :max="MAX_CLUSTER_PLAYERS_PAGE_SIZE" step="100" />
         <div class="param-hint" style="margin-top:4px;">Max {{ MAX_CLUSTER_PLAYERS_PAGE_SIZE.toLocaleString() }} players. Lower for faster runs.</div>
       </div>
 
-      <!-- Attributes -->
       <div class="sidebar-section">
         <div class="sidebar-label">
           Active attributes
-          <span class="tip" data-tip="These stats are used to compute how similar two players are. All attributes are selected by default. Use the Attributes selector in the Cluster Overview tab to change selection.">?</span>
+          <span class="tip" data-tip="These stats are used as clustering dimensions. All attributes are selected by default. Use the selector in the Cluster Overview tab to change the selection.">?</span>
         </div>
         <div class="attr-list">
           <div v-for="(attr, i) in availableAttributes" :key="attr" class="attr-chip">
@@ -492,6 +470,7 @@ function reconcileStoryStateAfterClustering() {
           </div>
           <div v-if="!availableAttributes.length" class="param-hint">Attributes load after connecting to the API.</div>
         </div>
+        <!-- Hidden multi-select keeps selectedAttributes v-model in sync with the API-driven list -->
         <select v-model="selectedAttributes" multiple style="display:none;">
           <option v-for="attr in availableAttributes" :key="attr" :value="attr">{{ attr }}</option>
         </select>
@@ -536,7 +515,7 @@ function reconcileStoryStateAfterClustering() {
           <span v-if="clusterResult" class="tab-badge">✓</span>
         </button>
         <button class="tab-btn" :class="{ active: activeTab === 'trends' }" @click="setTab('trends')"
-          title="Explore Elo, win%, and ace% trends over time for a selected player. Brush the mini chart to zoom.">
+          title="Explore Elo, win%, and ace% trends over time for a selected player.">
           2 · Player trends
           <span v-if="selectedPlayerId" class="tab-badge">✓</span>
         </button>
@@ -550,48 +529,31 @@ function reconcileStoryStateAfterClustering() {
       <!-- ── View area ─────────────────────────────────────────── -->
       <div class="view-area">
 
-        <!-- Loading -->
         <div v-if="loading" class="state-msg">↺ Loading data…</div>
-
-        <!-- Error -->
         <div v-else-if="error" class="state-msg error-text">⚠ {{ error }}</div>
 
-        <!-- Onboarding: no run yet -->
+        <!-- Onboarding -->
         <div v-else-if="!clusterResult" class="onboarding-card">
           <div style="font-size:32px;margin-bottom:12px;">🎾</div>
           <h3>Welcome to Tennis Player Analytics</h3>
           <p>This tool groups ATP players into archetypes using unsupervised clustering, then lets you explore their performance trends and explain individual match predictions.</p>
           <ul class="onboarding-steps">
-            <li>
-              <div class="step-num">1</div>
-              <span>Choose an algorithm and preset in the <strong>sidebar on the left</strong>. The defaults work well — you can always re-run later.</span>
-            </li>
-            <li>
-              <div class="step-num">2</div>
-              <span>Click <strong>▶ Run clustering</strong> in the top-right corner to group players.</span>
-            </li>
-            <li>
-              <div class="step-num">3</div>
-              <span>Use the <strong>Cluster overview</strong> tab to explore the scatter plot. Click any dot to select a player.</span>
-            </li>
-            <li>
-              <div class="step-num">4</div>
-              <span>Switch to <strong>Player trends</strong> to see that player's Elo and win-rate history over time.</span>
-            </li>
-            <li>
-              <div class="step-num">5</div>
-              <span>Pick a specific match in <strong>Match explainer</strong> to see why the model predicted a win or loss.</span>
-            </li>
+            <li><div class="step-num">1</div><span>Choose an algorithm and preset in the <strong>sidebar on the left</strong>.</span></li>
+            <li><div class="step-num">2</div><span>Click <strong>▶ Run clustering</strong> in the top-right corner.</span></li>
+            <li><div class="step-num">3</div><span>Explore the scatter plot in <strong>Cluster overview</strong>. Click any dot to select a player.</span></li>
+            <li><div class="step-num">4</div><span>Switch to <strong>Player trends</strong> to see Elo and win-rate history over time.</span></li>
+            <li><div class="step-num">5</div><span>Use <strong>Match explainer</strong> to see why the model predicted a win or loss.</span></li>
           </ul>
           <button class="run-btn" @click="runClustering" :disabled="loading || !canRunClustering" style="margin:0 auto;">
             ▶ Run clustering now
           </button>
         </div>
 
+        <!-- All three views stay mounted via v-show so state (brush window, tree zoom, loaded series) is preserved across tab switches -->
         <template v-else>
 
-          <!-- ── Cluster overview tab ───────────────────────── -->
-          <template v-if="activeTab === 'overview'">
+          <!-- Cluster overview -->
+          <div v-show="activeTab === 'overview'">
             <div class="context-banner">
               <span class="cb-icon">💡</span>
               <span>
@@ -609,10 +571,10 @@ function reconcileStoryStateAfterClustering() {
               @update:selected-player-id="selectedPlayerId = $event"
               @update:active-story-step="activeStoryStep = $event"
             />
-          </template>
+          </div>
 
-          <!-- ── Player trends tab ──────────────────────────── -->
-          <template v-if="activeTab === 'trends'">
+          <!-- Player trends -->
+          <div v-show="activeTab === 'trends'">
             <div class="context-banner">
               <span class="cb-icon">💡</span>
               <span>
@@ -634,17 +596,17 @@ function reconcileStoryStateAfterClustering() {
               @update:active-story-step="activeStoryStep = $event"
               @select-match-context="applyMatchContextSelection"
             />
-          </template>
+          </div>
 
-          <!-- ── Match explainer tab ────────────────────────── -->
-          <template v-if="activeTab === 'explainer'">
+          <!-- Match explainer -->
+          <div v-show="activeTab === 'explainer'">
             <div class="context-banner">
               <span class="cb-icon">💡</span>
               <span>
-                Select a <strong>focal player</strong> and a <strong>specific match row</strong> — the model will trace the decision-tree path it used to predict the outcome.
-                <strong>Orange nodes</strong> = the active prediction path.
+                Select a <strong>focal player</strong> and a <strong>specific match row</strong> — the model traces the decision-tree path it used to predict the outcome.
+                <strong>Orange nodes</strong> = active prediction path.
                 <strong>Green leaf</strong> = predicted win · <strong>Red leaf</strong> = predicted loss.
-                Use the feature importance bars below the tree to see which stats mattered most.
+                See the feature importance bars below the tree for which stats mattered most.
               </span>
             </div>
             <div v-if="!selectedPlayerId" class="context-banner" style="background:var(--warn-bg);border-color:var(--warn-border);color:var(--warn);">
@@ -660,7 +622,7 @@ function reconcileStoryStateAfterClustering() {
               @update:active-story-step="activeStoryStep = $event"
               @update:prediction-context="applyExplainerContext"
             />
-          </template>
+          </div>
 
         </template>
       </div>
@@ -670,15 +632,12 @@ function reconcileStoryStateAfterClustering() {
         <span>
           <span v-if="clusterResult">
             Run ID: <code style="font-family:var(--font-mono);color:var(--accent-text);font-size:10px;">{{ clusterResult.cluster_request_id }}</code>
-            · {{ algorithm }} · {{ distanceMetric }} distance · {{ scaling }} scaling
-            · {{ selectedAttributes.length }} attributes
+            · {{ algorithm }} · {{ distanceMetric }} distance · {{ scaling }} scaling · {{ selectedAttributes.length }} attributes
           </span>
           <span v-else style="color:var(--text-3);">No active run — configure settings in the sidebar and click Run clustering.</span>
         </span>
         <div class="footer-actions">
-          <button class="footer-btn" @click="loadInitialState" :disabled="loading" title="Re-check API health and reload default attributes">
-            ↺ Refresh
-          </button>
+          <button class="footer-btn" @click="loadInitialState" :disabled="loading" title="Re-check API health and reload default attributes">↺ Refresh</button>
         </div>
       </footer>
 

@@ -95,9 +95,15 @@ const selectedPlayerLabel = computed(() => {
   return selectedOption?.player_name ?? selectedPlayer.value
 })
 
-onMounted(() => {
+onMounted(async () => {
   if (!selectedPlayer.value && playerOptions.value.length > 0) {
     selectedPlayer.value = playerOptions.value[0].player_id
+    // watch(selectedPlayer) will fire and call loadSeries
+  } else if (selectedPlayer.value) {
+    // Player already set (v-show keeps component mounted from the start),
+    // so the watch won't fire — load data manually.
+    await loadSeries()
+    drawChart()
   }
 })
 
